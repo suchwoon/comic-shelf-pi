@@ -1,11 +1,14 @@
-import { authenticated, login, logoutCookie, passwordRequired } from "@/lib/server/auth";
+import { authenticated, login, logoutCookie, passwordRequired, requirePasswordConfigured } from "@/lib/server/auth";
 import { errorResponse, json, readJson } from "@/lib/server/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  try { return json({ authenticated: authenticated(request), passwordRequired: passwordRequired() }); }
+  try {
+    requirePasswordConfigured();
+    return json({ authenticated: authenticated(request), passwordRequired: passwordRequired() });
+  }
   catch (error) { return errorResponse(error); }
 }
 

@@ -9,6 +9,7 @@ import {
   LockKeyhole, LogOut, Pencil, Plus, RotateCcw, Search, Trash2, X,
 } from "lucide-react";
 import type { Book, LibraryResponse, SessionResponse } from "@/lib/types";
+import { UploadError, uploadPdf } from "@/lib/client/upload";
 
 type UploadStatus = "queued" | "uploading" | "checking" | "done" | "error";
 interface UploadItem {
@@ -155,7 +156,8 @@ export default function Bookshelf() {
   const inputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
   const processing = useRef(false);
-  const activeXhr = useRef<XMLHttpRequest | null>(null);
+  const activeUpload = useRef<AbortController | null>(null);
+  const nextUploadId = useRef(0);
 
   const requireLogin = useCallback(() => {
     setSession({ authenticated: false, passwordRequired: true });
@@ -195,7 +197,7 @@ export default function Bookshelf() {
 
   useEffect(() => { void loadSession(); }, [loadSession]);
   useEffect(() => { if (session?.authenticated) void loadBooks(); }, [session?.authenticated, loadBooks]);
-  useEffect(() => () => { activeXhr.current?.abort(); }, []);
+  useEffect(() => () => { activeUpload.current?.abort(); }, []);
   useEffect(() => {
     if (!notice) return;
     const timeout = window.setTimeout(() => setNotice(""), 5000);
@@ -221,38 +223,26 @@ export default function Bookshelf() {
     if (!next) return;
     processing.current = true;
     updateUpload(next.id, { status: "uploading", progress: 0 });
-    const xhr = new XMLHttpRequest();
-    activeXhr.current = xhr;
-    xhr.open("POST", "/api/books");
-    xhr.setRequestHeader("Content-Type", "application/pdf");
-    xhr.setRequestHeader("X-File-Name", encodeURIComponent(next.file.name));
-    xhr.timeout = 15 * 60 * 1000;
-    xhr.upload.onprogress = event => {
-      if (!event.lengthComputable) return;
-      const progress = Math.min(100, Math.round(event.loaded / event.total * 100));
-      updateUpload(next.id, { progress, status: progress === 100 ? "checking" : "uploading" });
-    };
-    const finish = (patch: Partial<UploadItem>) => {
+    const controller = new AbortController();
+    activeUpload.current = controller;
+    void uploadPdf(next.file, {
+      signal: controller.signal,
+      onProgress: (progress, checking) => updateUpload(next.id, { progress, status: checking ? "checking" : "uploading" }),
+    }).then(book => {
       processing.current = false;
-      activeXhr.current = null;
-      updateUpload(next.id, patch);
-    };
-    xhr.onload = () => {
-      let data: { book?: Book; error?: string } = {};
-      try { data = JSON.parse(xhr.responseText); } catch { /* A proxy may return HTML on failure. */ }
-      if (xhr.status >= 200 && xhr.status < 300 && data.book) {
-        const book = data.book;
+      if (!controller.signal.aborted) {
         setBooks(previous => [book, ...previous.filter(existing => existing.id !== book.id)]);
-        finish({ status: "done", progress: 100 });
-      } else {
-        if (xhr.status === 401) requireLogin();
-        finish({ status: "error", error: data.error || (xhr.status === 413 ? "This file exceeds the upload size limit." : "Upload failed. Please try again."), retryable: ![400, 413, 415, 422].includes(xhr.status) });
+        updateUpload(next.id, { status: "done", progress: 100 });
       }
-    };
-    xhr.onerror = () => finish({ status: "error", error: "Connection lost. Please try again.", retryable: true });
-    xhr.ontimeout = () => finish({ status: "error", error: "Upload timed out. Please try again.", retryable: true });
-    xhr.onabort = () => { processing.current = false; activeXhr.current = null; };
-    xhr.send(next.file);
+    }).catch(cause => {
+      processing.current = false;
+      if (controller.signal.aborted) return;
+      if (cause instanceof UploadError && cause.status === 401) requireLogin();
+      updateUpload(next.id, { status: "error", error: cause instanceof Error ? cause.message : "Upload failed. Please try again.", retryable: cause instanceof UploadError ? cause.retryable : true });
+    }).finally(() => {
+      processing.current = false;
+      activeUpload.current = null;
+    });
   }, [uploads, session?.authenticated, loading, updateUpload, requireLogin]);
 
   const pendingCount = uploads.filter(item => ["queued", "uploading", "checking"].includes(item.status)).length;
@@ -267,7 +257,7 @@ export default function Bookshelf() {
     if (!files || !session?.authenticated || loading || loadError) return;
     const incoming: UploadItem[] = Array.from(files).map(file => {
       const error = !/\.pdf$/i.test(file.name) ? "Only PDF files are supported." : file.size === 0 ? "This file is empty." : maxUploadBytes && file.size > maxUploadBytes ? `Each file must be ${formatBytes(maxUploadBytes)} or smaller.` : "";
-      return { id: crypto.randomUUID(), file, status: error ? "error" : "queued", progress: 0, ...(error ? { error, retryable: false } : {}) };
+      return { id: String(++nextUploadId.current), file, status: error ? "error" : "queued", progress: 0, ...(error ? { error, retryable: false } : {}) };
     });
     setUploads(previous => [...previous, ...incoming]);
   }

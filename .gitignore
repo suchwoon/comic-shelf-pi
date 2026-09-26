@@ -10,3 +10,5 @@ test-results/
 playwright-report/
 *.log
 comic-shelf-backup*.tar.gz
+.runtime/
+.cloudflared/

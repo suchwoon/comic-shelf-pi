@@ -32,6 +32,7 @@ export default defineConfig({
     env: {
       DATA_DIR: dataDir,
       BOOKS_PASSWORD: "test-only-comic-shelf-passphrase",
+      PUBLIC_ORIGIN: "",
       MAX_UPLOAD_MB: "16",
       NEXT_TELEMETRY_DISABLED: "1",
     },

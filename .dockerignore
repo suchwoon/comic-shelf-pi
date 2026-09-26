@@ -7,3 +7,6 @@ data
 test-results
 playwright-report
 *.tsbuildinfo
+.runtime
+.cloudflared
+.env.*

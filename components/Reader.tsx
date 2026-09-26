@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { ArrowLeft, ArrowLeftRight, BookOpen, Check, ChevronLeft, ChevronRight, Eye, EyeOff, LoaderCircle, Maximize, Minimize, RotateCcw } from "lucide-react";
 import type { PDFDocumentProxy, PDFDocumentLoadingTask } from "pdfjs-dist";
 import type { Book, ReadingDirection } from "@/lib/types";
 import { PdfPageCache } from "@/lib/reader/page-cache";
+import { ProgressSaveQueue, type ProgressSnapshot, type SaveStatus } from "@/lib/reader/progress";
 
-type Progress = Pick<Book, "currentPage" | "direction" | "fit">;
-type SaveStatus = "idle" | "saving" | "saved" | "error";
 const PAGE_LOADING_DELAY_MS = 200;
 const TAP_MAX_DISTANCE = 12;
 const TAP_MAX_DURATION_MS = 500;
@@ -16,58 +16,44 @@ const TAP_MAX_DURATION_MS = 500;
 type PageTap = { pointerId: number; x: number; y: number; time: number; target: HTMLButtonElement };
 
 function useProgress(bookId: string) {
-  const latest = useRef<Progress | null>(null);
-  const pending = useRef<Progress | null>(null);
-  const inFlight = useRef(false);
+  const latest = useRef<ProgressSnapshot | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
   const [status, setStatus] = useState<SaveStatus>("idle");
+  const queue = useMemo(() => new ProgressSaveQueue(async value => {
+    const response = await fetch(`/api/books/${encodeURIComponent(bookId)}/progress`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(value),
+      keepalive: true,
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (response.status === 401) window.location.assign("/");
+    if (!response.ok) throw new Error("save_failed");
+  }, value => { if (mounted.current) setStatus(value); }), [bookId]);
 
-  const flush = useCallback(async () => {
+  const flush = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
-    if (inFlight.current || !pending.current) return;
-    inFlight.current = true;
-    if (mounted.current) setStatus("saving");
-    try {
-      while (pending.current) {
-        const value: Progress = pending.current;
-        pending.current = null;
-        try {
-          const response = await fetch(`/api/books/${encodeURIComponent(bookId)}/progress`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(value),
-            keepalive: true,
-          });
-          if (response.status === 401) window.location.assign("/");
-          if (!response.ok) throw new Error("save_failed");
-        } catch {
-          // A newer, complete snapshot supersedes a failed older snapshot.
-          pending.current = pending.current ?? value;
-          throw new Error("save_failed");
-        }
-      }
-      if (mounted.current) setStatus("saved");
-    } catch {
-      if (mounted.current) setStatus("error");
-    } finally {
-      inFlight.current = false;
-    }
-  }, [bookId]);
+    return queue.flush();
+  }, [queue]);
 
-  const change = useCallback((patch: Partial<Progress>) => {
+  const change = useCallback((patch: Partial<ProgressSnapshot>) => {
     if (!latest.current) return;
     latest.current = { ...latest.current, ...patch };
-    pending.current = { ...latest.current };
+    queue.change(latest.current);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => void flush(), 450);
-  }, [flush]);
+  }, [flush, queue]);
 
   useEffect(() => {
     mounted.current = true;
-    const onVisibility = () => { if (document.visibilityState === "hidden") void flush(); };
-    const onPageHide = () => void flush();
+    const onPageHide = () => {
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+      queue.sendLatest();
+    };
+    const onVisibility = () => { if (document.visibilityState === "hidden") onPageHide(); };
     const onOnline = () => void flush();
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", onPageHide);
@@ -77,14 +63,15 @@ function useProgress(bookId: string) {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pagehide", onPageHide);
       window.removeEventListener("online", onOnline);
-      void flush();
+      onPageHide();
     };
-  }, [flush]);
+  }, [flush, queue]);
 
   return { latest, change, flush, status };
 }
 
 export default function Reader({ bookId }: { bookId: string }) {
+  const router = useRouter();
   const [book, setBook] = useState<Book | null>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -99,6 +86,9 @@ export default function Reader({ bookId }: { bookId: string }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
   const [fullscreenError, setFullscreenError] = useState("");
+  const [leaving, setLeaving] = useState(false);
+  const [navigationError, setNavigationError] = useState("");
+  const leavingRef = useRef(false);
   const [rendering, setRendering] = useState(true);
   const [showPageLoading, setShowPageLoading] = useState(false);
   const [renderError, setRenderError] = useState("");
@@ -114,6 +104,21 @@ export default function Reader({ bookId }: { bookId: string }) {
   const tapClick = useRef<{ target: HTMLButtonElement; time: number } | null>(null);
   const { latest, change, flush, status: saveStatus } = useProgress(bookId);
   const pageCache = useMemo(() => pdf ? new PdfPageCache(pdf) : null, [pdf]);
+
+  const backToLibrary = async () => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    setLeaving(true);
+    setNavigationError("");
+    if (await flush()) {
+      router.push("/");
+    } else {
+      leavingRef.current = false;
+      setLeaving(false);
+      setControls(true);
+      setNavigationError("Your reading position could not be saved. Check your connection and try again.");
+    }
+  };
 
   useEffect(() => () => pageCache?.dispose(), [pageCache]);
 
@@ -275,7 +280,7 @@ export default function Reader({ bookId }: { bookId: string }) {
   }, []);
 
   const goToPage = useCallback((nextPage: number) => {
-    if (!pdf || !Number.isFinite(nextPage)) return;
+    if (leavingRef.current || !pdf || !Number.isFinite(nextPage)) return;
     const next = Math.max(1, Math.min(pdf.numPages, Math.trunc(nextPage)));
     setPage(next);
     setPageInput(String(next));
@@ -371,12 +376,16 @@ export default function Reader({ bookId }: { bookId: string }) {
     <div className={`reader-root${touchNavigation ? " reader-touch" : ""}${controls ? "" : " reader-controls-hidden"}`} ref={rootRef}
       onPointerDownCapture={startTap} onPointerMoveCapture={moveTap} onPointerUpCapture={endTap} onPointerCancelCapture={cancelTap}>
       <header className="reader-heading">
-        <Link className="reader-back" href="/" onClick={() => void flush()} aria-label="Back to library">
-          <ArrowLeft size={18} /><span>Library</span>
+        <Link className="reader-back" href="/" onClick={event => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          void backToLibrary();
+        }} aria-label="Back to library" aria-busy={leaving}>
+          <ArrowLeft size={18} /><span>{leaving ? "Saving…" : "Library"}</span>
         </Link>
         <h1 className="reader-book-title" title={book?.title}>{book?.title || "Opening book"}</h1>
         <div className="reader-heading-actions">
-          <button type="button" className="reader-direction reader-button" onClick={toggleDirection} disabled={!pdf} title="Change reading direction" aria-label={`Reading direction: ${direction === "ltr" ? "Left to right" : "Right to left"}`}>
+          <button type="button" className="reader-direction reader-button" onClick={toggleDirection} disabled={!pdf || leaving} title="Change reading direction" aria-label={`Reading direction: ${direction === "ltr" ? "Left to right" : "Right to left"}`}>
             <ArrowLeftRight size={17} /><span>{direction === "ltr" ? "Left to right" : "Right to left"}</span>
           </button>
           <button type="button" className="reader-icon-button" onClick={() => {
@@ -451,6 +460,7 @@ export default function Reader({ bookId }: { bookId: string }) {
         </div>
       </footer>
       {fullscreenError && <div className="reader-toast" role="status"><span>{fullscreenError}</span><button type="button" onClick={() => setFullscreenError("")}>Dismiss</button></div>}
+      {navigationError && <div className="reader-toast" role="alert"><span>{navigationError}</span><button type="button" onClick={() => void backToLibrary()}>Try again</button></div>}
       <span className="sr-only" aria-live="polite" aria-atomic="true">{pdf && !rendering ? `Page ${page} of ${pageCount}` : ""}</span>
     </div>
   );

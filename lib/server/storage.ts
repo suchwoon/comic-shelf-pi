@@ -22,6 +22,7 @@ export function store(): Store {
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA busy_timeout = 5000;
+    PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS books (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -34,6 +35,12 @@ export function store(): Store {
       createdAt TEXT NOT NULL,
       lastReadAt TEXT,
       sha256 TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE IF NOT EXISTS progress_writers (
+      bookId TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      writerId TEXT NOT NULL,
+      sequence INTEGER NOT NULL,
+      PRIMARY KEY (bookId, writerId)
     );
   `);
   return state.__comicStore = { root, db };
@@ -59,7 +66,7 @@ export function coverFile(id: string) { return join(store().root, "covers", `${i
 
 export function maxUploadBytes() {
   const megabytes = Number(process.env.MAX_UPLOAD_MB || 256);
-  return (Number.isFinite(megabytes) && megabytes > 0 ? Math.min(megabytes, 4096) : 256) * 1024 * 1024;
+  return (Number.isFinite(megabytes) && megabytes > 0 ? Math.min(megabytes, 2048) : 256) * 1024 * 1024;
 }
 
 export function validateTitle(title: unknown): string {
@@ -70,10 +77,32 @@ export function validateTitle(title: unknown): string {
 }
 
 export function updateProgress(id: string, input: Record<string, unknown>): Book {
-  const book = getBook(id);
-  if (!Object.keys(input).length || Object.keys(input).some(key => !["currentPage", "direction", "fit"].includes(key))) {
+  const keys = Object.keys(input);
+  if (!keys.some(key => ["currentPage", "direction", "fit"].includes(key))
+    || keys.some(key => !["currentPage", "direction", "fit", "writerId", "sequence"].includes(key))) {
     throw new ApiError(400, "The reading settings are invalid.");
   }
+  const ordered = input.writerId !== undefined || input.sequence !== undefined;
+  if (ordered && (typeof input.writerId !== "string" || !/^[a-zA-Z0-9_-]{16,80}$/.test(input.writerId)
+    || typeof input.sequence !== "number" || !Number.isSafeInteger(input.sequence) || input.sequence < 1)) {
+    throw new ApiError(400, "The reading save sequence is invalid.");
+  }
+  const { db } = store();
+  // Protect both the sequence check and partial-setting merge, even when
+  // several server processes share this database.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const book = applyProgress(id, input, ordered);
+    db.exec("COMMIT");
+    return book;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function applyProgress(id: string, input: Record<string, unknown>, ordered: boolean): Book {
+  const book = getBook(id);
   if (input.currentPage !== undefined) {
     if (typeof input.currentPage !== "number" || !Number.isInteger(input.currentPage) || input.currentPage < 1 || input.currentPage > book.pageCount) {
       throw new ApiError(400, "This page number is outside the book.");
@@ -89,7 +118,18 @@ export function updateProgress(id: string, input: Record<string, unknown>): Book
     if (input.fit !== "page" && input.fit !== "width") throw new ApiError(400, "The page fit setting is invalid.");
     book.fit = input.fit;
   }
-  store().db.prepare("UPDATE books SET currentPage = ?, direction = ?, fit = ?, lastReadAt = ? WHERE id = ?")
+  const { db } = store();
+  if (ordered) {
+    const previous = db.prepare("SELECT sequence FROM progress_writers WHERE bookId = ? AND writerId = ?")
+      .get(id, input.writerId as string) as { sequence: number } | undefined;
+    // Repeated exit events and delayed older requests are successful no-ops.
+    // Other writers still use arrival order, preserving cross-device behavior.
+    if (previous && previous.sequence >= (input.sequence as number)) return getBook(id);
+    db.prepare(`INSERT INTO progress_writers (bookId, writerId, sequence) VALUES (?, ?, ?)
+      ON CONFLICT (bookId, writerId) DO UPDATE SET sequence = excluded.sequence`)
+      .run(id, input.writerId as string, input.sequence as number);
+  }
+  db.prepare("UPDATE books SET currentPage = ?, direction = ?, fit = ?, lastReadAt = ? WHERE id = ?")
     .run(book.currentPage, book.direction, book.fit, book.lastReadAt, id);
   return book;
 }

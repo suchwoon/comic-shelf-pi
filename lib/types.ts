@@ -24,3 +24,11 @@ export interface SessionResponse {
   authenticated: boolean;
   passwordRequired: boolean;
 }
+
+// Keep every upload request comfortably below common proxy request limits.
+export const UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
+
+export interface UploadSession {
+  id: string;
+  chunkBytes: number;
+}
