@@ -5,6 +5,7 @@ services:
       - "127.0.0.1:3000:3000"
     environment:
       BOOKS_PASSWORD: ${BOOKS_PASSWORD:?Set BOOKS_PASSWORD before starting Docker}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-256}
     volumes:

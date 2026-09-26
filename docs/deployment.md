@@ -12,7 +12,9 @@
 .runtime/node/bin/node scripts/setup.mjs --origin=https://books.catfish.cc
 ```
 
-책장 로그인 비밀번호는 `.env.local`의 `BOOKS_PASSWORD` 값입니다. 이 파일은 본인만 읽을 수 있도록 권한을 제한하며 Git에 포함되지 않습니다. Cloudflare 계정 비밀번호와는 별개입니다.
+최초 관리자 아이디는 `.env.local`의 `ADMIN_USERNAME`(기본 `admin`), 초기 비밀번호는 `BOOKS_PASSWORD` 값입니다. 이 파일은 본인만 읽을 수 있도록 권한을 제한하며 Git에 포함되지 않습니다. 최초 계정 생성 후에는 **Account settings**에서 비밀번호를 변경합니다. 환경 변수 변경은 기존 계정의 비밀번호를 변경하지 않습니다.
+
+지인에게는 **Account settings → Manage members → Create invitation**에서 만든 초대 링크를 전달하세요. 회원은 자기 아이디와 비밀번호로 책을 읽고 개인 진도를 저장하며, 책 업로드·삭제·제목 수정은 관리자만 가능합니다. 초대 링크는 7일 안에 한 번만 사용할 수 있습니다.
 
 ## 앱 자동 실행
 
@@ -37,7 +39,7 @@ node scripts/install-services.mjs
 1. 출력되는 최신 Cloudflare 로그인 링크를 PC 브라우저에서 바로 엽니다. 이전에 열어 둔 승인 탭은 재사용하지 않습니다.
 2. `catfish.cc`를 선택하고 연결을 승인합니다. 비밀번호나 API 토큰을 채팅에 붙여넣지 않습니다.
 3. 명령이 터널, `books.catfish.cc` DNS 기록, 자동 실행 서비스를 설정합니다.
-4. `https://books.catfish.cc`를 열고 `.env.local`의 책장 비밀번호로 로그인합니다.
+4. `https://books.catfish.cc`를 열고 관리자 계정으로 로그인합니다.
 
 인증 대기는 약 9분 뒤 종료될 수 있습니다. 시간이 지나 명령이 종료됐다면 같은 명령을 다시 실행하고 새로 출력된 링크를 사용합니다. 브라우저의 성공 화면 외에 터미널의 연결 완료 메시지도 확인합니다. 인증서가 이미 있으면 로그인 단계를 건너뜁니다. 기존 `books.catfish.cc` DNS 기록이 충돌하면 자동으로 덮어쓰지 않고 중단합니다. 이 경우 해당 기록이 다른 서비스를 가리키는지 먼저 확인합니다.
 
@@ -60,7 +62,9 @@ npm run build
 systemctl --user start comic-shelf.service
 ```
 
-비밀번호나 `PUBLIC_ORIGIN`만 변경했다면 `systemctl --user restart comic-shelf.service`로 적용합니다. 비밀번호 변경 시 기존 로그인 쿠키는 무효화됩니다. 자동 실행 중지는 `systemctl --user disable --now comic-shelf-tunnel.service comic-shelf.service`이며 책 데이터는 삭제하지 않습니다.
+`PUBLIC_ORIGIN` 같은 서버 설정을 변경했다면 `systemctl --user restart comic-shelf.service`로 적용합니다. 계정 비밀번호는 **Account settings**에서 바꾸며 서비스 재시작 없이 즉시 적용되고 다른 로그인 세션은 무효화됩니다. 자동 실행 중지는 `systemctl --user disable --now comic-shelf-tunnel.service comic-shelf.service`이며 책 데이터는 삭제하지 않습니다.
+
+관리자 비밀번호를 잊은 경우 `.env.local`의 `BOOKS_PASSWORD`에 새 비밀번호를 설정하고 `.runtime/node/bin/node scripts/reset-admin-password.mjs`를 실행합니다. 로컬 서버 접근 권한이 있어야 사용할 수 있으며 책과 회원은 유지합니다.
 
 ## 업로드와 읽던 위치
 

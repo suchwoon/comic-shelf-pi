@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
+import { requireAccountConfiguration } from "./account-config.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const hostname = process.argv[2] || "books.catfish.cc";
@@ -11,7 +12,7 @@ if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.tes
   throw new Error("Pass a hostname such as books.example.com.");
 }
 const settings = parseEnv(await readFile(join(root, ".env.local"), "utf8"));
-if (!settings.BOOKS_PASSWORD?.trim()) throw new Error("Set up the library password first.");
+requireAccountConfiguration(root, settings);
 if (settings.PUBLIC_ORIGIN !== `https://${hostname}`) {
   throw new Error(`First run: node scripts/setup.mjs --origin=https://${hostname}`);
 }
@@ -72,4 +73,4 @@ async function waitFor(url) {
 }
 await waitFor("http://127.0.0.1:3000/api/session");
 await waitFor("http://127.0.0.1:20241/ready");
-console.log(`Connected https://${hostname}. Sign in with BOOKS_PASSWORD from .env.local.`);
+console.log(`Connected https://${hostname}. Sign in with your administrator account. For a new library, the initial credentials are ADMIN_USERNAME and BOOKS_PASSWORD in .env.local.`);

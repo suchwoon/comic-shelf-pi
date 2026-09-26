@@ -1,5 +1,6 @@
 @import "../components/bookshelf.css";
 @import "../components/reader.css";
+@import "../components/account.css";
 
 :root { color-scheme: light; --paper: #fafafa; --surface: #fff; --ink: #171717; --muted: #737373; --line: #e5e5e5; --accent: #171717; --accent-light: #f0f0f0; --danger: #b42318; }
 * { box-sizing: border-box; }

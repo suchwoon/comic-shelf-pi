@@ -28,7 +28,7 @@ async function expectPageFits(page: Page) {
 test("streams scanned PDFs, normalizes legacy width fit, and restores reading progress", async ({ page }, testInfo) => {
   const browserErrors: string[] = [];
   page.on("pageerror", error => browserErrors.push(error.message));
-  await page.request.post("/api/session", { data: { password: "test-only-comic-shelf-passphrase" } });
+  await page.request.post("/api/session", { data: { username: "admin", password: "test-only-comic-shelf-passphrase" } });
   const uploaded = await page.request.post("/api/books", { headers: { "Content-Type": "application/pdf", "X-File-Name": "scan-test.pdf" }, data: readFileSync(scanFixture) });
   expect(uploaded.status()).toBe(201);
   const { book } = await uploaded.json();
@@ -82,9 +82,11 @@ test("signs in, uploads, resumes across devices, manages books, and signs out", 
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await expect(page.getByLabel("Library password")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("login.png"), fullPage: true });
+  await page.getByLabel("Username", { exact: true }).fill("admin");
   await page.getByLabel("Library password").fill("incorrect-password");
   await page.getByRole("button", { name: "Open library", exact: true }).click();
-  await expect(page.getByRole("main").getByRole("alert")).toHaveText("Incorrect password. Please try again.");
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText("Incorrect username or password. Please try again.");
+  await page.getByLabel("Username", { exact: true }).fill("admin");
   await page.getByLabel("Library password").fill("test-only-comic-shelf-passphrase");
   await page.getByRole("button", { name: "Open library", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Your library is empty", exact: true })).toBeVisible();
@@ -129,7 +131,7 @@ test("signs in, uploads, resumes across devices, manages books, and signs out", 
 
   // A second session sees server progress, not a browser-local bookmark.
   const otherDevice = await browser.newContext({ baseURL: "http://127.0.0.1:3210" });
-  await otherDevice.request.post("/api/session", { data: { password: "test-only-comic-shelf-passphrase" } });
+  await otherDevice.request.post("/api/session", { data: { username: "admin", password: "test-only-comic-shelf-passphrase" } });
   expect((await (await otherDevice.request.get(endpoint)).json()).book.currentPage).toBe(2);
   await otherDevice.close();
   await page.screenshot({ path: testInfo.outputPath("reader.png"), fullPage: true });

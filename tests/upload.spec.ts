@@ -32,6 +32,7 @@ test("uploads over HTTP when secure-context UUID APIs are unavailable", async ({
   await page.goto("http://books.test:3210");
   expect(await page.evaluate(() => window.isSecureContext)).toBe(false);
   expect(await page.evaluate(() => typeof crypto.randomUUID)).toBe("undefined");
+  await page.getByLabel("Username", { exact: true }).fill("admin");
   await page.getByLabel("Library password").fill("test-only-comic-shelf-passphrase");
   await page.getByRole("button", { name: "Open library", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
@@ -45,7 +46,7 @@ test("uploads over HTTP when secure-context UUID APIs are unavailable", async ({
 });
 
 test("sends large PDFs in bounded requests and retries a failed transfer from the beginning", async ({ page }) => {
-  await page.request.post("/api/session", { data: { password: "test-only-comic-shelf-passphrase" } });
+  await page.request.post("/api/session", { data: { username: "admin", password: "test-only-comic-shelf-passphrase" } });
   let failFirst = true;
   const offsets: number[] = [];
   const sizes: number[] = [];
@@ -93,7 +94,7 @@ test("sends large PDFs in bounded requests and retries a failed transfer from th
 });
 
 test("returns to sign-in when a large upload loses its authenticated session", async ({ page }) => {
-  await page.request.post("/api/session", { data: { password: "test-only-comic-shelf-passphrase" } });
+  await page.request.post("/api/session", { data: { username: "admin", password: "test-only-comic-shelf-passphrase" } });
   await page.route("**/api/uploads", route => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "Please sign in to continue." }) }));
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Library", exact: true })).toBeVisible();

@@ -19,7 +19,7 @@ test.afterAll(() => {
 });
 
 async function openBook(page: Page) {
-  const session = await page.request.post("/api/session", { data: { password: "test-only-comic-shelf-passphrase" } });
+  const session = await page.request.post("/api/session", { data: { username: "admin", password: "test-only-comic-shelf-passphrase" } });
   expect(session.ok()).toBe(true);
   const response = await page.request.post("/api/books", {
     headers: { "Content-Type": "application/pdf", "X-File-Name": "reader-touch.pdf" },

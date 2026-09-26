@@ -6,10 +6,11 @@ import type { FormEvent, MouseEvent, ReactNode } from "react";
 import {
   ArrowDownToLine, ArrowRight, BookOpen, CheckCircle2, ChevronDown,
   CircleAlert, CloudUpload, Ellipsis, FileText, LoaderCircle,
-  LockKeyhole, LogOut, Pencil, Plus, RotateCcw, Search, Trash2, X,
+  LockKeyhole, LogOut, Pencil, Plus, RotateCcw, Search, Trash2, UserRound, X,
 } from "lucide-react";
 import type { Book, LibraryResponse, SessionResponse } from "@/lib/types";
 import { UploadError, uploadPdf } from "@/lib/client/upload";
+import AccountPanel from "@/components/AccountPanel";
 
 type UploadStatus = "queued" | "uploading" | "checking" | "done" | "error";
 interface UploadItem {
@@ -149,7 +150,9 @@ export default function Bookshelf() {
   const [action, setAction] = useState<BookAction | null>(null);
   const [notice, setNotice] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [accountOpen, setAccountOpen] = useState(false);
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [logoutBusy, setLogoutBusy] = useState(false);
@@ -160,10 +163,15 @@ export default function Bookshelf() {
   const nextUploadId = useRef(0);
 
   const requireLogin = useCallback(() => {
-    setSession({ authenticated: false, passwordRequired: true });
+    activeUpload.current?.abort();
+    dragCounter.current = 0;
+    setSession({ authenticated: false, passwordRequired: true, user: null });
     setBooks([]);
+    setUploads([]);
     setLoading(false);
     setAction(null);
+    setAccountOpen(false);
+    setDragging(false);
   }, []);
 
   const loadSession = useCallback(async () => {
@@ -196,7 +204,7 @@ export default function Bookshelf() {
   }, [requireLogin]);
 
   useEffect(() => { void loadSession(); }, [loadSession]);
-  useEffect(() => { if (session?.authenticated) void loadBooks(); }, [session?.authenticated, loadBooks]);
+  useEffect(() => { if (session?.authenticated && session.user) void loadBooks(); }, [session?.authenticated, session?.user?.id, loadBooks]);
   useEffect(() => () => { activeUpload.current?.abort(); }, []);
   useEffect(() => {
     if (!notice) return;
@@ -218,7 +226,7 @@ export default function Bookshelf() {
   }, []);
 
   useEffect(() => {
-    if (processing.current || !session?.authenticated || loading) return;
+    if (processing.current || !session?.authenticated || session.user?.role !== "admin" || loading) return;
     const next = uploads.find(item => item.status === "queued");
     if (!next) return;
     processing.current = true;
@@ -243,7 +251,7 @@ export default function Bookshelf() {
       processing.current = false;
       activeUpload.current = null;
     });
-  }, [uploads, session?.authenticated, loading, updateUpload, requireLogin]);
+  }, [uploads, session?.authenticated, session?.user?.role, loading, updateUpload, requireLogin]);
 
   const pendingCount = uploads.filter(item => ["queued", "uploading", "checking"].includes(item.status)).length;
   useEffect(() => {
@@ -254,7 +262,7 @@ export default function Bookshelf() {
   }, [pendingCount]);
 
   function enqueue(files: FileList | File[] | null) {
-    if (!files || !session?.authenticated || loading || loadError) return;
+    if (!files || !session?.authenticated || session.user?.role !== "admin" || loading || loadError) return;
     const incoming: UploadItem[] = Array.from(files).map(file => {
       const error = !/\.pdf$/i.test(file.name) ? "Only PDF files are supported." : file.size === 0 ? "This file is empty." : maxUploadBytes && file.size > maxUploadBytes ? `Each file must be ${formatBytes(maxUploadBytes)} or smaller.` : "";
       return { id: String(++nextUploadId.current), file, status: error ? "error" : "queued", progress: 0, ...(error ? { error, retryable: false } : {}) };
@@ -268,10 +276,12 @@ export default function Bookshelf() {
     setLoginBusy(true);
     setLoginError("");
     try {
-      const response = await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) });
+      const response = await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: username.trim(), password }) });
       if (!response.ok) throw new Error(await readError(response, "Check your password and try again."));
+      const data: SessionResponse = await response.json();
       setPassword("");
-      setSession({ authenticated: true, passwordRequired: true });
+      setLoading(true);
+      setSession(data);
     } catch (cause) {
       setLoginError(cause instanceof Error ? cause.message : "Check your connection and try again.");
     } finally { setLoginBusy(false); }
@@ -299,11 +309,13 @@ export default function Bookshelf() {
   }, [books, query, sort]);
   const recent = useMemo(() => [...books].filter(book => book.lastReadAt !== null).sort((a, b) => Date.parse(b.lastReadAt!) - Date.parse(a.lastReadAt!))[0], [books]);
   const totalSize = books.reduce((sum, book) => sum + book.size, 0);
-  const canUpload = !!session?.authenticated && !loading && !loadError;
+  const isAdmin = !!session?.authenticated && session.user?.role === "admin";
+  const canUpload = isAdmin && !loading && !loadError;
   const showLogin = !!session && !session.authenticated;
   const pickFiles = () => inputRef.current?.click();
 
   function openAction(kind: BookAction["kind"], book: Book, target: HTMLButtonElement) {
+    if (!isAdmin) return;
     const menu = target.closest("details");
     menu?.removeAttribute("open");
     menu?.querySelector("summary")?.focus();
@@ -340,10 +352,12 @@ export default function Bookshelf() {
       <section className="shelf-login">
         <form className="shelf-login-form" onSubmit={login}>
           <h1>Your library</h1>
-          <p>Enter your password to continue.</p>
-          <label className="shelf-field-label">Library password<input type="password" autoComplete="current-password" autoFocus value={password} onChange={event => setPassword(event.target.value)} required disabled={loginBusy} /></label>
+          <p>Sign in to continue where you left off.</p>
+          <label className="shelf-field-label">Username<input autoComplete="username" autoCapitalize="none" spellCheck={false} autoFocus value={username} onChange={event => setUsername(event.target.value)} required disabled={loginBusy} /></label>
+          <label className="shelf-field-label">Library password<input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required disabled={loginBusy} /></label>
           {loginError && <p className="shelf-form-error" role="alert"><CircleAlert size={16} />{loginError}</p>}
-          <button type="submit" className="shelf-button shelf-button-primary" disabled={loginBusy || !password}>{loginBusy && <LoaderCircle size={16} className="shelf-spin" />}Open library<ArrowRight size={16} /></button>
+          <button type="submit" className="shelf-button shelf-button-primary" disabled={loginBusy || !username.trim() || !password}>{loginBusy && <LoaderCircle size={16} className="shelf-spin" />}Open library<ArrowRight size={16} /></button>
+          <p className="shelf-login-help">Need an account or a password reset? Ask the library administrator for a link.</p>
         </form>
       </section>
     );
@@ -367,7 +381,7 @@ export default function Bookshelf() {
           <label className="shelf-search"><Search size={16} /><span className="sr-only">Search books</span><input type="search" placeholder="Search books" value={query} onChange={event => setQuery(event.target.value)} disabled={!session?.authenticated || loading} /></label>
           <label className="shelf-sort"><span className="sr-only">Sort books</span><select value={sort} onChange={event => setSort(event.target.value)}><option value="recent">Recently read</option><option value="added">Recently added</option><option value="title">Title</option></select><ChevronDown size={14} /></label>
         </div>
-        {uploads.length > 0 && <UploadList uploads={uploads} onRetry={id => updateUpload(id, { status: "queued", progress: 0, error: undefined })} onClear={() => setUploads(previous => previous.filter(item => !["done", "error"].includes(item.status)))} />}
+        {isAdmin && uploads.length > 0 && <UploadList uploads={uploads} onRetry={id => updateUpload(id, { status: "queued", progress: 0, error: undefined })} onClear={() => setUploads(previous => previous.filter(item => !["done", "error"].includes(item.status)))} />}
         {loading || !session ? (
           <div className="shelf-loading" role="status"><LoaderCircle className="shelf-spin" size={20} strokeWidth={1.5} /><span>Loading library</span></div>
         ) : loadError ? (
@@ -376,9 +390,9 @@ export default function Bookshelf() {
           <div className="shelf-empty">
             <BookOpen size={32} strokeWidth={1.2} />
             <h2>Your library is empty</h2>
-            <p>Add a PDF to start reading.</p>
-            <button type="button" className="shelf-button shelf-button-primary" onClick={pickFiles}><Plus size={16} />Upload PDF</button>
-            <span className="shelf-upload-hint">Or drop your files here{maxUploadBytes > 0 && <> · {formatBytes(maxUploadBytes)} per file</>}</span>
+            <p>{isAdmin ? "Add a PDF to start reading." : "Books added by the administrator will appear here."}</p>
+            {isAdmin && <><button type="button" className="shelf-button shelf-button-primary" onClick={pickFiles} disabled={!canUpload}><Plus size={16} />Upload PDF</button>
+            <span className="shelf-upload-hint">Or drop your files here{maxUploadBytes > 0 && <> · {formatBytes(maxUploadBytes)} per file</>}</span></>}
           </div>
         ) : filteredBooks.length === 0 ? (
           <div className="shelf-no-results"><Search size={28} strokeWidth={1.4} /><h2>No books found</h2><p>Try a different title.</p><button className="shelf-button shelf-button-light" onClick={() => setQuery("")}>Clear search</button></div>
@@ -390,16 +404,17 @@ export default function Bookshelf() {
                 <Link className="shelf-book-link" href={`/read/${book.id}`} onClick={openReader} aria-label={`Read ${book.title}`}><BookCover book={book} /><h3 title={book.title}>{book.title}</h3></Link>
                 <div className="shelf-book-meta">
                   <span>{book.pageCount.toLocaleString("en-US")} {book.pageCount === 1 ? "page" : "pages"}{book.lastReadAt && <> · {percentage}% read</>}</span>
-                  <details className="shelf-book-menu">
+                  <div className="shelf-book-tools"><a className="shelf-icon-button" href={`/api/books/${book.id}/file`} download={book.originalName} aria-label={`Download ${book.title}`} title="Download PDF"><ArrowDownToLine size={15} /></a>
+                  {isAdmin && <details className="shelf-book-menu">
                     <summary className="shelf-icon-button" aria-label={`Manage ${book.title}`}><Ellipsis size={18} /></summary>
                     <div className="shelf-book-menu-options"><button type="button" onClick={event => openAction("rename", book, event.currentTarget)}><Pencil size={14} />Rename</button><button type="button" className="shelf-menu-danger" onClick={event => openAction("delete", book, event.currentTarget)}><Trash2 size={14} />Delete book</button></div>
-                  </details>
+                  </details>}</div>
                 </div>
                 {book.lastReadAt && <div className="shelf-book-reading-track" aria-hidden="true"><span style={{ width: `${percentage}%` }} /></div>}
               </article>
             );
           })}</div>
-          <div className="shelf-collection-bottom"><span>{query.trim() ? `${filteredBooks.length} ${filteredBooks.length === 1 ? "result" : "results"}` : "Drop PDF files anywhere to add them."}</span>{maxUploadBytes > 0 && <span>{formatBytes(maxUploadBytes)} per file</span>}</div>
+          <div className="shelf-collection-bottom"><span>{query.trim() ? `${filteredBooks.length} ${filteredBooks.length === 1 ? "result" : "results"}` : isAdmin ? "Drop PDF files anywhere to add them." : "Your reading progress is saved to your account."}</span>{isAdmin && maxUploadBytes > 0 && <span>{formatBytes(maxUploadBytes)} per file</span>}</div>
         </>}
       </section>
     </>;
@@ -410,16 +425,18 @@ export default function Bookshelf() {
       <header className="shelf-header">
         <div className="shelf-header-inner">
           <Link className="shelf-brand" href="/" aria-label="Shelf home">Shelf.</Link>
-          <div className="shelf-header-actions">{session?.authenticated && <>
-            <button className="shelf-button shelf-button-primary shelf-header-upload" type="button" onClick={pickFiles} disabled={!canUpload}><Plus size={16} /><span>Upload PDF</span></button>
-            {session.passwordRequired && <button className="shelf-icon-button shelf-logout" type="button" onClick={() => void logout()} aria-label="Sign out" title={pendingCount ? "Wait for uploads to finish before signing out" : "Sign out"} disabled={!!pendingCount || logoutBusy}><LogOut size={17} /></button>}
+          <div className="shelf-header-actions">{session?.authenticated && session.user && <>
+            {isAdmin && <button className="shelf-button shelf-button-primary shelf-header-upload" type="button" onClick={pickFiles} disabled={!canUpload}><Plus size={16} /><span>Upload PDF</span></button>}
+            <button className="shelf-button shelf-button-light shelf-account-button" type="button" onClick={() => setAccountOpen(true)} aria-label="Account settings" title={`Account settings · ${session.user.username}`}><UserRound size={16} /><span>{session.user.username}</span></button>
+            <button className="shelf-icon-button shelf-logout" type="button" onClick={() => void logout()} aria-label="Sign out" title={pendingCount ? "Wait for uploads to finish before signing out" : "Sign out"} disabled={!!pendingCount || logoutBusy}><LogOut size={17} /></button>
           </>}</div>
         </div>
       </header>
-      <input ref={inputRef} type="file" accept=".pdf,application/pdf" multiple className="sr-only" tabIndex={-1} aria-label="Choose PDF files" onChange={event => { enqueue(event.target.files); event.currentTarget.value = ""; }} />
+      {isAdmin && <input ref={inputRef} type="file" accept=".pdf,application/pdf" multiple className="sr-only" tabIndex={-1} aria-label="Choose PDF files" onChange={event => { enqueue(event.target.files); event.currentTarget.value = ""; }} />}
       <main className="shelf-main">{content}</main>
       {dragging && <div className="shelf-drop-overlay" aria-hidden="true"><div><ArrowDownToLine size={32} strokeWidth={1.4} /><h2>Drop PDFs to upload</h2><p>Add files to your library.</p></div></div>}
-      {action && <BookDialog key={`${action.kind}-${action.book.id}`} action={action} onClose={() => setAction(null)} onUnauthorized={requireLogin} onSaved={book => { setBooks(previous => book ? previous.map(existing => existing.id === book.id ? book : existing) : previous.filter(existing => existing.id !== action.book.id)); setNotice(book ? "Book renamed." : "Book deleted."); }} />}
+      {isAdmin && action && <BookDialog key={`${action.kind}-${action.book.id}`} action={action} onClose={() => setAction(null)} onUnauthorized={requireLogin} onSaved={book => { setBooks(previous => book ? previous.map(existing => existing.id === book.id ? book : existing) : previous.filter(existing => existing.id !== action.book.id)); setNotice(book ? "Book renamed." : "Book deleted."); }} />}
+      {accountOpen && session?.user && <AccountPanel user={session.user} onClose={() => setAccountOpen(false)} onUnauthorized={requireLogin} onSession={setSession} />}
       {notice && <div className="shelf-toast" role="status"><CheckCircle2 size={17} /><span>{notice}</span><button className="shelf-icon-button" type="button" aria-label="Dismiss notification" onClick={() => setNotice("")}><X size={16} /></button></div>}
     </div>
   );

@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { getBook, store, updateProgress } from "../lib/server/storage";
+import { getBook, listBooks, migrateLegacyProgress, store, updateProgress } from "../lib/server/storage";
 import { ApiError } from "../lib/server/http";
 
 let dataDir: string;
@@ -34,6 +34,19 @@ function createBook() {
   const id = randomUUID();
   store().db.prepare(`INSERT INTO books (id, title, originalName, size, pageCount, createdAt, sha256)
     VALUES (?, 'Progress fixture', 'progress.pdf', 100, 10, ?, ?)`).run(id, new Date().toISOString(), id);
+  return id;
+}
+
+function createUser() {
+  // Account initialization owns this table; these tests exercise storage only.
+  store().db.exec(`CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    passwordHash TEXT NOT NULL, role TEXT NOT NULL, createdAt TEXT NOT NULL,
+    disabled INTEGER NOT NULL DEFAULT 0
+  )`);
+  const id = randomUUID();
+  store().db.prepare("INSERT INTO users (id, username, passwordHash, role, createdAt) VALUES (?, ?, 'unused-test-hash', 'reader', ?)")
+    .run(id, `user-${id}`, new Date().toISOString());
   return id;
 }
 
@@ -95,4 +108,77 @@ it("rejects malformed sequence metadata atomically and removes writer state with
   assert.equal(getBook(id).currentPage, 4);
   store().db.prepare("DELETE FROM books WHERE id = ?").run(id);
   assert.equal(store().db.prepare("SELECT COUNT(*) AS count FROM progress_writers WHERE bookId = ?").get(id)?.count, 0);
+});
+
+it("each account starts fresh and keeps its own page, direction, fit and reading timestamp", () => {
+  const id = createBook();
+  const alice = createUser();
+  const bob = createUser();
+  updateProgress(id, { currentPage: 9, direction: "rtl", fit: "width" });
+  for (const user of [alice, bob]) {
+    const fresh = getBook(id, user);
+    assert.equal(fresh.currentPage, 1);
+    assert.equal(fresh.direction, "ltr");
+    assert.equal(fresh.fit, "page");
+    assert.equal(fresh.lastReadAt, null);
+  }
+  updateProgress(id, { currentPage: 4, direction: "rtl", fit: "width" }, alice);
+  assert.equal(getBook(id, bob).currentPage, 1);
+  assert.equal(getBook(id, bob).lastReadAt, null);
+  updateProgress(id, { currentPage: 2 }, bob);
+  const aliceBook = listBooks(alice).find(book => book.id === id)!;
+  const bobBook = listBooks(bob).find(book => book.id === id)!;
+  assert.deepEqual([aliceBook.currentPage, aliceBook.direction, aliceBook.fit], [4, "rtl", "width"]);
+  assert.deepEqual([bobBook.currentPage, bobBook.direction, bobBook.fit], [2, "ltr", "page"]);
+  assert.ok(aliceBook.lastReadAt);
+  assert.ok(bobBook.lastReadAt);
+  assert.equal(getBook(id).currentPage, 9);
+  closeStore();
+  assert.equal(getBook(id, alice).currentPage, 4);
+  assert.equal(getBook(id, bob).currentPage, 2);
+});
+
+it("writer sequence collisions across accounts do not suppress or overwrite their progress", () => {
+  const id = createBook();
+  const alice = createUser();
+  const bob = createUser();
+  updateProgress(id, { currentPage: 6, writerId: writerA, sequence: 20 }, alice);
+  updateProgress(id, { currentPage: 2, writerId: writerA, sequence: 1 }, bob);
+  updateProgress(id, { currentPage: 4, writerId: writerA, sequence: 19 }, alice);
+  assert.equal(getBook(id, alice).currentPage, 6);
+  assert.equal(getBook(id, bob).currentPage, 2);
+  updateProgress(id, { currentPage: 3, writerId: writerA, sequence: 2 }, bob);
+  assert.equal(getBook(id, alice).currentPage, 6);
+  assert.equal(getBook(id, bob).currentPage, 3);
+});
+
+it("legacy progress migration is scoped to its administrator and is idempotent", () => {
+  const id = createBook();
+  const admin = createUser();
+  const reader = createUser();
+  updateProgress(id, { currentPage: 5, direction: "rtl", fit: "width", writerId: writerA, sequence: 3 });
+  migrateLegacyProgress(admin);
+  const inherited = getBook(id, admin);
+  assert.deepEqual([inherited.currentPage, inherited.direction, inherited.fit], [5, "rtl", "width"]);
+  assert.equal(inherited.lastReadAt, getBook(id).lastReadAt);
+  assert.equal(getBook(id, reader).currentPage, 1);
+  assert.equal(getBook(id, reader).lastReadAt, null);
+  updateProgress(id, { currentPage: 2, writerId: writerA, sequence: 2 }, admin);
+  assert.equal(getBook(id, admin).currentPage, 5);
+  updateProgress(id, { currentPage: 7, writerId: writerA, sequence: 4 }, admin);
+  migrateLegacyProgress(admin);
+  assert.equal(getBook(id, admin).currentPage, 7);
+  assert.equal(getBook(id, reader).currentPage, 1);
+});
+
+it("deleting a book cascades every account's saved position and writer metadata", () => {
+  const id = createBook();
+  const alice = createUser();
+  const bob = createUser();
+  for (const user of [alice, bob]) updateProgress(id, { currentPage: 3, writerId: writerA, sequence: 1 }, user);
+  store().db.prepare("DELETE FROM books WHERE id = ?").run(id);
+  for (const table of ["user_progress", "user_progress_writers"]) {
+    assert.equal(store().db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE bookId = ?`).get(id)?.count, 0);
+  }
+  assert.equal(store().db.prepare("SELECT COUNT(*) AS count FROM users WHERE id IN (?, ?)").get(alice, bob)?.count, 2);
 });

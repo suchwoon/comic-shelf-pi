@@ -1,0 +1,52 @@
+.shelf-login-form > .shelf-field-label + .shelf-field-label { margin-top: 19px; }
+.shelf-login-form > .shelf-login-help { margin: 22px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.shelf-login-form > .shelf-field-hint, .shelf-account-password > .shelf-field-hint { margin: 8px 0 20px; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.shelf-field-hint { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.shelf-book-tools { display: flex; align-items: center; flex-shrink: 0; gap: 1px; }
+.shelf-book-tools > .shelf-icon-button { width: 30px; height: 32px; }
+.shelf-account-button { max-width: 180px; }
+.shelf-account-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shelf-account-dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
+.shelf-account-content { position: relative; }
+.shelf-account-dialog .shelf-account-description { margin: 0 0 24px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.shelf-account-nav { display: flex; gap: 22px; margin: 0 0 24px; border-bottom: 1px solid var(--line); }
+.shelf-account-nav button { min-height: 44px; margin-bottom: -1px; padding: 0 0 12px; background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font-size: 13px; }
+.shelf-account-nav button[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.shelf-account-password { max-width: 400px; padding-top: 2px; }
+.shelf-account-password > .shelf-field-label + .shelf-field-label { margin-top: 20px; }
+.shelf-account-section + .shelf-account-section { margin-top: 28px; }
+.shelf-account-section h3 { margin: 0; font-size: 14px; font-weight: 550; line-height: 1.5; }
+.shelf-account-section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.shelf-account-list { margin: 12px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.shelf-account-list li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px 0; border-bottom: 1px solid var(--line); }
+.shelf-account-list-copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.shelf-account-list-copy strong { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.shelf-account-list-copy span { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.shelf-account-list-actions { display: flex; flex-shrink: 0; gap: 8px; }
+.shelf-account-list .shelf-button { min-height: 36px; font-size: 11px; padding: 8px 10px; }
+.shelf-button-block { border-color: var(--line); background: var(--surface); color: var(--danger); }
+.shelf-button-block:hover:not(:disabled) { background: #fff5f4; }
+.shelf-invitation-created { margin-top: 17px; padding: 18px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); }
+.shelf-invitation-created > strong { display: block; font-size: 13px; font-weight: 550; overflow-wrap: anywhere; }
+.shelf-invitation-created > p { margin: 8px 0 16px; font-size: 12px; line-height: 1.7; color: var(--muted); }
+.shelf-invitation-created > .shelf-button { margin-top: 12px; }
+.shelf-invitation-created > p[role="status"] { margin-bottom: 0; }
+.shelf-account-loading { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 140px; color: var(--muted); font-size: 13px; }
+.shelf-account-notice { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 20px; font-size: 12px; line-height: 1.7; }
+.shelf-account-notice svg { flex-shrink: 0; margin-top: 2px; }
+.shelf-account-content > .shelf-form-error { margin: 0 0 20px !important; }
+.shelf-account-load-error { margin-top: 24px; }
+.shelf-account-load-error > .shelf-button { margin-top: 14px; }
+.shelf-join { max-width: 380px; margin-top: min(8vh, 70px); }
+@media (max-width: 600px) {
+  .shelf-account-button { width: 44px; padding: 0; flex-shrink: 0; }
+  .shelf-account-button span { display: none; }
+  .shelf-header-actions { gap: 6px; }
+  .shelf-account-dialog { padding: 25px 22px; }
+  .shelf-account-list li { flex-wrap: wrap; gap: 10px; }
+  .shelf-account-list-actions { flex-wrap: wrap; }
+  .shelf-account-list .shelf-button { min-height: 44px; }
+  .shelf-book-meta { flex-wrap: wrap; }
+  .shelf-book-tools { margin-left: auto; }
+  .shelf-book-tools > .shelf-icon-button { width: 44px; height: 44px; }
+}

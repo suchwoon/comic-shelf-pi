@@ -4,11 +4,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
+import { requireAccountConfiguration } from "./account-config.mjs";
 
 if (process.platform !== "linux") throw new Error("This installer uses Linux systemd user services.");
 const root = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const environment = parseEnv(await readFile(join(root, ".env.local"), "utf8"));
-if (!environment.BOOKS_PASSWORD?.trim()) throw new Error("Run scripts/setup.mjs before installing services.");
+requireAccountConfiguration(root, environment);
 await access(join(root, ".next", "BUILD_ID"));
 const node = join(root, ".runtime", "node", "bin", "node");
 await access(node);

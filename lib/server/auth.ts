@@ -1,12 +1,8 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { store } from "./storage";
+import type { AccountUser } from "../types";
 import { ApiError } from "./http";
+import { changeAccountPassword, ensureAccountState, registerAccount, revokeSession, SESSION_LIFETIME, sessionUser, signIn } from "./accounts";
 
 const COOKIE = "comic_shelf_session";
-const LIFETIME = 60 * 60 * 24 * 30;
-const authState = globalThis as typeof globalThis & { __comicLoginAttempts?: { count: number; resetAt: number } };
 
 function publicOrigin() {
   const configured = process.env.PUBLIC_ORIGIN?.trim();
@@ -61,70 +57,62 @@ export function checkOrigin(request: Request) {
   }
 }
 
-export function passwordRequired() { return Boolean(process.env.BOOKS_PASSWORD); }
+export function passwordRequired() { return true; }
 
 export function requirePasswordConfigured() {
-  if (!passwordRequired()) throw new ApiError(503, "The library is not configured yet. Set BOOKS_PASSWORD on the server to enable access.");
+  ensureAccountState();
 }
 
-function secret() {
-  const file = join(store().root, "session-secret");
-  try { return readFileSync(file); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    const generated = randomBytes(32);
-    try { writeFileSync(file, generated, { flag: "wx", mode: 0o600 }); return generated; }
-    catch (writeError) {
-      if ((writeError as NodeJS.ErrnoException).code !== "EEXIST") throw writeError;
-      return readFileSync(file);
-    }
-  }
+function requestToken(request: Request) {
+  return request.headers.get("cookie")?.split(";").map(value => value.trim())
+    .find(value => value.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1) || null;
 }
 
-function signature(payload: string) {
-  return createHmac("sha256", secret()).update(process.env.BOOKS_PASSWORD || "").update("\0").update(payload).digest("base64url");
+function sessionCookie(request: Request, token: string) {
+  return `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_LIFETIME}${cookieOrigin(request).startsWith("https:") ? "; Secure" : ""}`;
 }
 
-function same(a: string, b: string) {
-  return timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest());
+export function currentUser(request: Request): AccountUser | null {
+  checkOrigin(request);
+  return sessionUser(requestToken(request));
 }
 
 export function authenticated(request: Request) {
-  checkOrigin(request);
-  if (!passwordRequired()) return false;
-  const token = request.headers.get("cookie")?.split(";").map(value => value.trim()).find(value => value.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
-  if (!token || token.length > 256) return false;
-  const [expiry, nonce, suppliedSignature, extra] = token.split(".");
-  if (extra || !/^\d{10,13}$/.test(expiry) || !/^[\w-]{32}$/.test(nonce || "") || !suppliedSignature) return false;
-  if (Number(expiry) <= Date.now() || Number(expiry) > Date.now() + (LIFETIME + 60) * 1000) return false;
-  return same(suppliedSignature, signature(`${expiry}.${nonce}`));
+  return Boolean(currentUser(request));
 }
 
-export function requireAuth(request: Request) {
-  requirePasswordConfigured();
-  if (!authenticated(request)) {
-    throw new ApiError(401, "Please sign in to continue.");
-  }
+export function requireAuth(request: Request): AccountUser {
+  const user = currentUser(request);
+  if (!user) throw new ApiError(401, "Please sign in to continue.");
+  return user;
 }
 
-export function login(request: Request, password: unknown) {
+export function requireAdmin(request: Request): AccountUser {
+  const user = requireAuth(request);
+  if (user.role !== "admin") throw new ApiError(403, "Only the administrator can make this change.");
+  return user;
+}
+
+export async function login(request: Request, username: unknown, password: unknown) {
   checkOrigin(request);
-  requirePasswordConfigured();
-  const now = Date.now();
-  if (!authState.__comicLoginAttempts || authState.__comicLoginAttempts.resetAt <= now) {
-    authState.__comicLoginAttempts = { count: 0, resetAt: now + 10 * 60 * 1000 };
-  }
-  if (authState.__comicLoginAttempts.count >= 15) throw new ApiError(429, "Too many sign-in attempts. Please try again in 10 minutes.");
-  if (typeof password !== "string" || !same(password, process.env.BOOKS_PASSWORD!)) {
-    authState.__comicLoginAttempts.count++;
-    throw new ApiError(401, "Incorrect password. Please try again.");
-  }
-  authState.__comicLoginAttempts.count = 0;
-  const payload = `${now + LIFETIME * 1000}.${randomBytes(24).toString("base64url")}`;
-  return `${COOKIE}=${payload}.${signature(payload)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${LIFETIME}${cookieOrigin(request).startsWith("https:") ? "; Secure" : ""}`;
+  const { user, token } = await signIn(username, password);
+  return { user, cookie: sessionCookie(request, token) };
+}
+
+export async function changePassword(request: Request, currentPassword: unknown, newPassword: unknown) {
+  const user = requireAuth(request);
+  const result = await changeAccountPassword(user.id, currentPassword, newPassword);
+  return { user: result.user, cookie: sessionCookie(request, result.token) };
+}
+
+export async function register(request: Request, token: unknown, username: unknown, password: unknown) {
+  checkOrigin(request);
+  const result = await registerAccount(token, username, password);
+  return { user: result.user, cookie: sessionCookie(request, result.token) };
 }
 
 export function logoutCookie(request: Request) {
   checkOrigin(request);
+  revokeSession(requestToken(request));
   return `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${cookieOrigin(request).startsWith("https:") ? "; Secure" : ""}`;
 }

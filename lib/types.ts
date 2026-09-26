@@ -23,6 +23,26 @@ export interface LibraryResponse {
 export interface SessionResponse {
   authenticated: boolean;
   passwordRequired: boolean;
+  user: AccountUser | null;
+}
+
+export interface AccountUser {
+  id: string;
+  username: string;
+  role: "admin" | "reader";
+  createdAt: string;
+}
+
+export interface ManagedUser extends AccountUser {
+  disabled: boolean;
+}
+
+export interface AccountInvitation {
+  id: string;
+  kind: "invite" | "reset";
+  username: string | null;
+  expiresAt: string;
+  createdAt: string;
 }
 
 // Keep every upload request comfortably below common proxy request limits.

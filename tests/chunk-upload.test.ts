@@ -14,6 +14,8 @@ import { UPLOAD_CHUNK_BYTES } from "../lib/types";
 import { POST as startRoute } from "../app/api/uploads/route";
 import { PATCH as appendRoute, DELETE as cancelRoute } from "../app/api/uploads/[id]/route";
 import { POST as completeRoute } from "../app/api/uploads/[id]/complete/route";
+import { GET as booksRoute, POST as uploadBookRoute } from "../app/api/books/route";
+import { PATCH as renameBookRoute, DELETE as deleteBookRoute } from "../app/api/books/[id]/route";
 
 let dataDir: string;
 let fixture: Uint8Array;
@@ -127,7 +129,7 @@ it("requires authentication and same-origin requests on every upload route and b
   assert.equal((await appendRoute(chunk(Buffer.alloc(8)), context)).status, 401);
   assert.equal((await completeRoute(new Request("http://localhost/api/uploads", { method: "POST" }), context)).status, 401);
   assert.equal((await cancelRoute(new Request("http://localhost/api/uploads", { method: "DELETE" }), context)).status, 401);
-  const cookie = login(new Request("http://localhost/api/session"), "chunk-test-password")!;
+  const cookie = (await login(new Request("http://localhost/api/session"), "admin", "chunk-test-password")).cookie;
   const make = (body: string, origin = "http://localhost") => new Request("http://localhost/api/uploads", {
     method: "POST", headers: { Cookie: cookie, Origin: origin, "Content-Type": "application/json" }, body,
   });
@@ -140,4 +142,26 @@ it("requires authentication and same-origin requests on every upload route and b
   assert.match(session.id, /^[0-9a-f-]{36}$/);
   await cancelUpload(session.id);
   assert.equal(store().root, dataDir);
+});
+
+it("reader accounts can list books but cannot upload, rename, delete or operate any chunk endpoint", async () => {
+  const session = await login(new Request("http://localhost/api/session"), "admin", "chunk-test-password");
+  const context = { params: Promise.resolve({ id: randomUUID() }) };
+  const request = (method: string) => new Request("http://localhost/api/books", {
+    method, headers: { Cookie: session.cookie, Origin: "http://localhost" },
+  });
+  // The role is read from the account on every request, including existing sessions.
+  store().db.prepare("UPDATE users SET role = 'reader' WHERE id = ?").run(session.user.id);
+  try {
+    assert.equal((await booksRoute(request("GET"))).status, 200);
+    assert.equal((await uploadBookRoute(request("POST"))).status, 403);
+    assert.equal((await renameBookRoute(request("PATCH"), context)).status, 403);
+    assert.equal((await deleteBookRoute(request("DELETE"), context)).status, 403);
+    assert.equal((await startRoute(request("POST"))).status, 403);
+    assert.equal((await appendRoute(request("PATCH"), context)).status, 403);
+    assert.equal((await completeRoute(request("POST"), context)).status, 403);
+    assert.equal((await cancelRoute(request("DELETE"), context)).status, 403);
+  } finally {
+    store().db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(session.user.id);
+  }
 });

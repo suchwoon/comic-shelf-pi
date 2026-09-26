@@ -24,9 +24,10 @@ function set(key, value) {
   source = pattern.test(source) ? source.replace(pattern, () => line) : `${source.replace(/\s*$/, "")}\n${line}\n`;
 }
 if (!values.BOOKS_PASSWORD?.trim()) set("BOOKS_PASSWORD", randomBytes(24).toString("base64url"));
+if (!values.ADMIN_USERNAME) set("ADMIN_USERNAME", "admin");
 if (publicOrigin) set("PUBLIC_ORIGIN", publicOrigin);
 if (!values.DATA_DIR) set("DATA_DIR", "./data");
 if (!values.MAX_UPLOAD_MB) set("MAX_UPLOAD_MB", "256");
 await writeFile(file, source.trimStart(), { mode: 0o600 });
 await chmod(file, 0o600);
-console.log("Private settings are ready in .env.local. Read BOOKS_PASSWORD there to sign in.");
+console.log("Private settings are ready in .env.local. ADMIN_USERNAME and BOOKS_PASSWORD create the first administrator only; existing accounts are unchanged.");

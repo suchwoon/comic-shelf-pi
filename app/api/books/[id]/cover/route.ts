@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    requireAuth(request);
-    const book = getBook((await context.params).id);
+    const user = requireAuth(request);
+    const book = getBook((await context.params).id, user.id);
     return await serveFile(request, coverFile(book.id), "image/jpeg");
   } catch (error) { return errorResponse(error); }
 }

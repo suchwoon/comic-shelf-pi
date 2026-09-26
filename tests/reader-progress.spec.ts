@@ -3,7 +3,7 @@ import { PDFDocument } from "pdf-lib";
 import { revealReaderControls } from "./reader-helpers";
 
 async function openBook(page: Page) {
-  const session = await page.request.post("/api/session", { data: { password: "test-only-comic-shelf-passphrase" } });
+  const session = await page.request.post("/api/session", { data: { username: "admin", password: "test-only-comic-shelf-passphrase" } });
   expect(session.ok()).toBe(true);
   const document = await PDFDocument.create();
   document.setTitle(`Progress regression ${Date.now()} ${Math.random()}`);
@@ -99,12 +99,13 @@ test("an expired session redirects to sign-in instead of trapping the reader in 
     await unauthorized;
     await expect(page).toHaveURL("/");
     await expect(page.getByLabel("Library password")).toBeVisible();
+    await page.getByLabel("Username", { exact: true }).fill("admin");
     await page.getByLabel("Library password").fill("test-only-comic-shelf-passphrase");
     await page.getByRole("button", { name: "Open library", exact: true }).click();
     await expect(page.getByRole("link", { name: "Read reading-progress", exact: true })).toBeVisible();
   } finally {
     await page.goto("about:blank").catch(() => {});
-    await page.request.post("/api/session", { data: { password: "test-only-comic-shelf-passphrase" } });
+    await page.request.post("/api/session", { data: { username: "admin", password: "test-only-comic-shelf-passphrase" } });
     expect((await page.request.delete(book.endpoint)).status()).toBe(204);
   }
 });
