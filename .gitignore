@@ -1,0 +1,12 @@
+node_modules/
+.next/
+data/
+.env
+.env.*
+!.env.example
+public/pdfjs/
+*.tsbuildinfo
+test-results/
+playwright-report/
+*.log
+comic-shelf-backup*.tar.gz
