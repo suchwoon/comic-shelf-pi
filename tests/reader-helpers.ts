@@ -9,3 +9,10 @@ export async function revealReaderControls(page: Page) {
   }
   await expect(page.getByRole("button", { name: "Hide controls", exact: true })).toBeVisible();
 }
+
+export async function openReaderSettings(page: Page) {
+  await revealReaderControls(page);
+  const toggle = page.getByRole("button", { name: "Reading settings", exact: true });
+  if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+  await expect(page.getByRole("dialog", { name: "Reading settings", exact: true })).toBeVisible();
+}

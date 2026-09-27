@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { revealReaderControls } from "./reader-helpers";
+import { openReaderSettings, revealReaderControls } from "./reader-helpers";
 
 async function openBook(page: Page, landscapePages: number[] = [], prepare?: (endpoint: string) => Promise<void>) {
   const session = await page.request.post("/api/session", { data: { username: "admin", password: "test-only-comic-shelf-passphrase" } });
@@ -73,10 +73,67 @@ async function expectPagesFit(page: Page) {
   }))).toBe(true);
 }
 
+test("floating settings fit narrow screens, dismiss accessibly, and keep the page in place", async ({ page }, testInfo) => {
+  const endpoint = await openBook(page);
+  try {
+    const settings = page.getByRole("dialog", { name: "Reading settings", exact: true });
+    const toggle = page.getByRole("button", { name: "Reading settings", exact: true });
+    const input = page.getByRole("textbox", { name: "Page number", exact: true });
+    const originalViewport = page.viewportSize()!;
+    for (const viewport of [originalViewport, { width: 320, height: 568 }]) {
+      await page.setViewportSize(viewport);
+      await expectPagesFit(page);
+      await expectPages(page, [1]);
+      const canvas = await page.getByTestId("pdf-page").elementHandle();
+      const before = await page.getByTestId("pdf-page").boundingBox();
+
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await openReaderSettings(page);
+      await expect(toggle).toHaveAttribute("aria-expanded", "true");
+      await expect(page.getByRole("button", { name: "Two-page view", exact: true })).toBeFocused();
+      const bounds = (await settings.boundingBox())!;
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.y).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height);
+      expect(await page.getByTestId("pdf-page").boundingBox()).toEqual(before);
+      await page.screenshot({ path: testInfo.outputPath(`reader-settings-${viewport.width}.png`), fullPage: true, animations: "disabled" });
+
+      // Reader shortcuts should not turn a page while a setting has focus.
+      await page.keyboard.press("ArrowRight");
+      await expectPages(page, [1]);
+      await page.keyboard.press("Escape");
+      await expect(settings).toBeHidden();
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await expect(toggle).toBeFocused();
+
+      await openReaderSettings(page);
+      await input.click();
+      await expect(settings).toBeHidden();
+      await expect(input).toBeFocused();
+      await expectPages(page, [1]);
+      expect(await page.getByTestId("pdf-page").boundingBox()).toEqual(before);
+      expect(await canvas!.evaluate(element => element.isConnected)).toBe(true);
+      await canvas!.dispose();
+    }
+
+    await openReaderSettings(page);
+    await page.getByRole("button", { name: "Hide controls", exact: true }).click();
+    await expect(settings).toBeHidden();
+    const touchReader = await page.locator(".reader-root").evaluate(element => element.classList.contains("reader-touch"));
+    await page.getByRole("button", { name: touchReader ? "Show controls (center area)" : "Show controls", exact: true }).click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(settings).toBeHidden();
+  } finally {
+    await removeBook(page, endpoint);
+  }
+});
+
 test("direction arrows show the current direction and spreads follow it through both boundaries", async ({ page }, testInfo) => {
   const endpoint = await openBook(page);
   try {
     const mode = page.getByRole("button", { name: "Two-page view", exact: true });
+    await openReaderSettings(page);
     await expect(mode).toHaveAttribute("aria-pressed", "false");
     await expect(page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).locator("svg")).toHaveClass(/lucide-arrow-right/);
     await mode.click();
@@ -94,11 +151,13 @@ test("direction arrows show the current direction and spreads follow it through 
     expect(bounds[0]).toBeLessThan(bounds[1]);
     await page.screenshot({ path: testInfo.outputPath("reader-two-page-ltr.png"), fullPage: true });
 
+    await openReaderSettings(page);
     await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).click();
     await expect(page.getByRole("button", { name: "Reading direction: Right to left", exact: true }).locator("svg")).toHaveClass(/lucide-arrow-left/);
     await expectPages(page, [3, 2]);
     await page.screenshot({ path: testInfo.outputPath("reader-two-page-rtl.png"), fullPage: true });
     await page.locator(".reader-heading").screenshot({ path: testInfo.outputPath("reader-toolbar-rtl.png") });
+    await page.keyboard.press("Escape");
     await page.keyboard.press("ArrowLeft");
     await expectPages(page, [5, 4]);
     await page.keyboard.press("ArrowRight");
@@ -137,6 +196,7 @@ test("changing the view preserves the exact page and remembers the preference af
     const input = page.getByRole("textbox", { name: "Page number", exact: true });
     await jumpToPage(page, 3);
     await expectPages(page, [3]);
+    await openReaderSettings(page);
     await mode.click();
     await expectPages(page, [2, 3]);
     await input.focus();
@@ -146,6 +206,7 @@ test("changing the view preserves the exact page and remembers the preference af
     await page.reload();
     await expectPages(page, [2, 3]);
     await revealReaderControls(page);
+    await openReaderSettings(page);
     await expect(mode).toHaveAttribute("aria-pressed", "true");
     await mode.click();
     await expectPages(page, [3]);
@@ -154,6 +215,7 @@ test("changing the view preserves the exact page and remembers the preference af
     await page.reload();
     await expectPages(page, [3]);
     await revealReaderControls(page);
+    await openReaderSettings(page);
     await expect(mode).toHaveAttribute("aria-pressed", "false");
   } finally {
     await removeBook(page, endpoint);
@@ -179,7 +241,9 @@ test("wheel gestures turn one page or spread, keep their direction in RTL, and i
     await page.waitForTimeout(650);
     await page.mouse.wheel(0, -120);
     await expectPages(page, [1]);
+    await openReaderSettings(page);
     await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).click();
+    await page.keyboard.press("Escape");
     await page.waitForTimeout(650);
     await viewport.hover();
     await page.mouse.wheel(0, 120);
@@ -189,7 +253,9 @@ test("wheel gestures turn one page or spread, keep their direction in RTL, and i
     await page.locator(".reader-heading").dispatchEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120 });
     await page.getByRole("textbox", { name: "Page number", exact: true }).dispatchEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120 });
     await expectPages(page, [2]);
+    await openReaderSettings(page);
     await page.getByRole("button", { name: "Two-page view", exact: true }).click();
+    await page.keyboard.press("Escape");
     await expectPages(page, [3, 2]);
     await viewport.hover();
     await page.mouse.wheel(0, 120);
@@ -207,6 +273,7 @@ test("wheel gestures turn one page or spread, keep their direction in RTL, and i
 test("landscape pages split their fixed pair without shifting the following spreads", async ({ page }) => {
   const endpoint = await openBook(page, [3, 6]);
   try {
+    await openReaderSettings(page);
     await page.getByRole("button", { name: "Two-page view", exact: true }).click();
     const spreads = [[1], [2], [3], [4, 5], [6], [7], [8]];
     await expectPages(page, spreads[0]);
@@ -241,6 +308,7 @@ test("a spread replaces the previous page and saves progress only after both ima
     await route.continue();
   });
   try {
+    await openReaderSettings(page);
     await page.getByRole("button", { name: "Two-page view", exact: true }).click();
     await expectPages(page, [1]);
     await jumpToPage(page, 4);
@@ -276,6 +344,7 @@ test("a failed next spread keeps the visible bookmark and retries through Next p
     await route.continue();
   });
   try {
+    await openReaderSettings(page);
     await page.getByRole("button", { name: "Two-page view", exact: true }).click();
     await expectPages(page, [1]);
     await page.getByRole("button", { name: "Next page", exact: true }).click();

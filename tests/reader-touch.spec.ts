@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { openReaderSettings } from "./reader-helpers";
 
 let fixtureDirectory: string;
 let fixture: Buffer;
@@ -72,8 +73,10 @@ test("touch areas navigate with hidden controls, follow reading direction, and r
 
     await tapArea(page, "Show controls (center area)");
     await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeVisible();
+    await openReaderSettings(page);
     await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).tap();
     await expect(page.getByRole("button", { name: "Reading direction: Right to left", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
     await tapArea(page, "Hide controls (center area)");
     await tapArea(page, "Next page (left area)");
     await expectSavedPage(page, endpoint, 2);

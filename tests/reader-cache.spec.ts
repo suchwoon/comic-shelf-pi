@@ -190,18 +190,22 @@ test("resizing replaces outdated canvases and rapid navigation displays the fina
     await page.screenshot({ path: testInfo.outputPath("reader-resized.png"), fullPage: true });
 
     const beforeHideCanvas = await visibleCanvas.elementHandle();
+    const beforeHideBounds = await visibleCanvas.boundingBox();
     const touchReader = await page.locator(".reader-root").evaluate(element => element.classList.contains("reader-touch"));
     await page.getByRole("button", { name: "Hide controls", exact: true }).click();
     const reveal = page.getByRole("button", { name: touchReader ? "Show controls (center area)" : "Show controls", exact: true });
     await expect(reveal).toBeVisible();
     await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeHidden();
-    await expect.poll(() => beforeHideCanvas!.evaluate(canvas => canvas.isConnected)).toBe(touchReader);
+    expect(await beforeHideCanvas!.evaluate(canvas => canvas.isConnected)).toBe(true);
+    expect(await visibleCanvas.boundingBox()).toEqual(beforeHideBounds);
     await expect(visibleCanvas).toHaveAttribute("data-page", "7");
     await expectPageFits(page);
     await page.screenshot({ path: testInfo.outputPath("reader-controls-hidden.png"), fullPage: true });
     if (touchReader) await reveal.tap();
     else await reveal.click();
     await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeVisible();
+    expect(await beforeHideCanvas!.evaluate(canvas => canvas.isConnected)).toBe(true);
+    expect(await visibleCanvas.boundingBox()).toEqual(beforeHideBounds);
     await expectPageFits(page);
     expect(browserErrors).toEqual([]);
     await initialCanvas!.dispose();
