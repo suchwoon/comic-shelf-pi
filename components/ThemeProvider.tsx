@@ -2,14 +2,14 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
-import { applyTheme, parseTheme, readTheme, THEME_MEDIA_QUERY, THEME_STORAGE_KEY, type Theme } from "@/lib/client/theme";
+import { applyTheme, resolveTheme, readTheme, THEME_STORAGE_KEY, type Theme } from "@/lib/client/theme";
 
 const ThemeContext = createContext<{ theme: Theme; ready: boolean; setTheme: (theme: Theme) => void } | null>(null);
 
 export default function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("system");
+  const [theme, setThemeState] = useState<Theme>("light");
   const [ready, setReady] = useState(false);
-  const preference = useRef<Theme>("system");
+  const preference = useRef<Theme>("light");
   const pathname = usePathname();
 
   const syncTheme = useCallback((next: Theme) => {
@@ -21,20 +21,14 @@ export default function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     syncTheme(readTheme());
     setReady(true);
-    const media = window.matchMedia(THEME_MEDIA_QUERY);
-    const onSystemChange = () => {
-      if (preference.current === "system") applyTheme("system");
-    };
     const onStorage = (event: StorageEvent) => {
       try {
         if (event.storageArea !== window.localStorage) return;
       } catch { return; }
-      if (event.key === THEME_STORAGE_KEY || event.key === null) syncTheme(parseTheme(event.newValue));
+      if (event.key === THEME_STORAGE_KEY || event.key === null) syncTheme(resolveTheme(event.newValue));
     };
-    media.addEventListener("change", onSystemChange);
     window.addEventListener("storage", onStorage);
     return () => {
-      media.removeEventListener("change", onSystemChange);
       window.removeEventListener("storage", onStorage);
     };
   }, [syncTheme]);

@@ -42,6 +42,16 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
   const pendingMessage = useRef<{ body: string; clientId: string } | null>(null);
   const composing = useRef(false);
 
+  function resizeInput() {
+    const input = inputRef.current;
+    if (!input || !dialogRef.current?.open) return;
+    input.style.height = "auto";
+    input.style.height = `${input.scrollHeight}px`;
+    if (nearBottom.current && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }
+
+  useLayoutEffect(() => { resizeInput(); }, [draft]);
+
   function mergeMessages(incoming: ChatMessage[]) {
     setMessages(previous => {
       const known = new Map(previous.map(message => [message.id, message]));
@@ -62,9 +72,17 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
       document.body.style.overflow = mobile.matches ? "hidden" : previousOverflow;
       if (mobile.matches) dialog.showModal();
       else { dialog.show(); inputRef.current?.focus({ preventScroll: true }); }
+      resizeInput();
       if (nearBottom.current && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
     };
     show();
+    let inputWidth = 0;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width === inputWidth) return;
+      inputWidth = entry.contentRect.width;
+      resizeInput();
+    });
+    observer.observe(inputRef.current!);
     mobile.addEventListener("change", show);
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !document.querySelector("dialog:modal")) {
@@ -74,6 +92,7 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
+      observer.disconnect();
       mobile.removeEventListener("change", show);
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;
@@ -195,10 +214,10 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
       aria-label="Open chat" aria-expanded={open} aria-controls="shelf-chat" onClick={() => { nearBottom.current = true; setOpen(true); }} hidden={open}>
       <MessageCircle size={18} strokeWidth={1.5} /><span>Chat</span>
     </button>
-    <dialog ref={dialogRef} id="shelf-chat" className="shelf-chat" aria-labelledby="shelf-chat-title" aria-describedby="shelf-chat-description"
+    <dialog ref={dialogRef} id="shelf-chat" className="shelf-chat" aria-labelledby="shelf-chat-title"
       onCancel={event => { event.preventDefault(); setOpen(false); }}>
       <header className="shelf-chat-header">
-        <div><h2 id="shelf-chat-title"><MessageCircle size={17} strokeWidth={1.5} />Chat</h2><p id="shelf-chat-description">A shared room for everyone.</p></div>
+        <h2 id="shelf-chat-title">Chat</h2>
         <button type="button" className="shelf-icon-button" aria-label="Close chat" onClick={() => setOpen(false)}><X size={19} /></button>
       </header>
       <div className="shelf-chat-conversation">
@@ -211,11 +230,20 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
           {!messages.length && <div className="shelf-chat-empty">
             {!loaded && !loadError ? <><LoaderCircle size={21} className="shelf-spin" /><p>Loading conversation…</p></> : loadError ? <p>Waiting for a connection…</p> : <><MessageCircle size={26} strokeWidth={1.2} /><p>No messages yet.<br />Say hello to your fellow readers.</p></>}
           </div>}
-          {messages.map(message => <article className="shelf-chat-message" key={message.id}>
-            <div className="shelf-chat-message-meta"><strong>{message.username}</strong>{message.userId === user.id && <span className="shelf-chat-you">you</span>}
-              <time dateTime={message.createdAt} title={new Date(message.createdAt).toLocaleString()}>{new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
-            </div><p>{message.body}</p>
-          </article>)}
+          {messages.map((message, index) => {
+            const previous = messages[index - 1];
+            const sentAt = new Date(message.createdAt);
+            const previousSentAt = previous ? new Date(previous.createdAt) : null;
+            const gap = previousSentAt ? sentAt.getTime() - previousSentAt.getTime() : Infinity;
+            const continued = previous?.userId === message.userId && gap >= 0 && gap <= 5 * 60_000
+              && previousSentAt?.toDateString() === sentAt.toDateString();
+            return <article className={`shelf-chat-message${continued ? " shelf-chat-message-continued" : ""}`} key={message.id}
+              aria-label={`${message.username}${message.userId === user.id ? " (you)" : ""}`}>
+              {!continued && <div className="shelf-chat-message-meta"><strong>{message.username}</strong>
+                <time dateTime={message.createdAt} title={sentAt.toLocaleString()}>{sentAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
+              </div>}<p>{message.body}</p>
+            </article>;
+          })}
         </div>
         {newMessages && <button type="button" className="shelf-chat-new" onClick={() => {
           nearBottom.current = true;
@@ -227,7 +255,7 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
       <form className="shelf-chat-compose" onSubmit={send}>
         {sendError && <p className="shelf-chat-error" role="alert">{sendError}</p>}
         <div className="shelf-chat-input-row">
-          <textarea ref={inputRef} aria-label="Message" placeholder="Write a message…" rows={2} maxLength={CHAT_MESSAGE_LIMIT}
+          <textarea ref={inputRef} aria-label="Message" placeholder="Write a message…" rows={1} maxLength={CHAT_MESSAGE_LIMIT}
             value={draft} readOnly={sending} onChange={event => { setDraft(event.target.value); setSendError(""); pendingMessage.current = null; }}
             onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
             onKeyDown={event => {
@@ -240,7 +268,7 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
             {sending ? <LoaderCircle size={17} className="shelf-spin" /> : <ArrowUp size={18} />}
           </button>
         </div>
-        <div className="shelf-chat-compose-note"><span>Enter to send · Shift+Enter for a new line</span>{draft.length > CHAT_MESSAGE_LIMIT * .8 && <span>{draft.length}/{CHAT_MESSAGE_LIMIT}</span>}</div>
+        {draft.length > CHAT_MESSAGE_LIMIT * .8 && <div className="shelf-chat-compose-count">{draft.length}/{CHAT_MESSAGE_LIMIT}</div>}
       </form>
     </dialog>
   </>;

@@ -3,10 +3,7 @@
 .shelf-header-inner { max-width: 1280px; min-height: 88px; margin: 0 auto; padding: 0 40px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .shelf-brand { font-size: 25px; font-weight: 650; letter-spacing: -1.1px; line-height: 1; }
 .shelf-header-actions { display: flex; align-items: center; gap: 16px; }
-.shelf-theme-selector { position: relative; display: inline-flex; align-items: center; flex-shrink: 0; gap: 8px; min-height: 40px; border-radius: 5px; color: var(--muted); }
-.shelf-theme-selector > svg { flex-shrink: 0; pointer-events: none; }
-.shelf-theme-selector select { min-height: 40px; max-width: 145px; padding: 8px 3px; border: 0; border-radius: 5px; background: transparent; color: var(--ink); font-size: 12px; cursor: pointer; }
-.shelf-theme-selector option, .shelf-sort option { background: var(--surface); color: var(--ink); }
+.shelf-sort option { background: var(--surface); color: var(--ink); }
 .shelf-button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 15px; border: 1px solid transparent; border-radius: 5px; font-size: 13px; font-weight: 500; line-height: 1.4; transition: background .15s, border-color .15s; }
 .shelf-button > svg { flex-shrink: 0; }
 .shelf-button-primary { color: var(--accent-foreground); background: var(--accent); border-color: var(--accent); }
@@ -129,10 +126,6 @@
   .shelf-header-inner { min-height: 72px; padding: 0 22px; gap: 20px; }
   .shelf-brand { font-size: 23px; }
   .shelf-header-actions { gap: 9px; }
-  .shelf-theme-selector { justify-content: center; width: 44px; height: 44px; }
-  .shelf-theme-selector:hover { color: var(--ink); background: var(--accent-light); }
-  .shelf-theme-selector:has(select:focus-visible) { outline: 2px solid var(--ink); outline-offset: 4px; }
-  .shelf-theme-selector select { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; opacity: 0; }
   .shelf-button { min-height: 44px; }
   .shelf-icon-button { width: 44px; height: 44px; }
   .shelf-header-upload { min-height: 44px; padding: 9px 12px; font-size: 12px; }

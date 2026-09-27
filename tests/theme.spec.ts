@@ -35,42 +35,51 @@ async function expectReadableDarkControl(locator: Locator) {
   expect(colors.contrast).toBeGreaterThanOrEqual(4.5);
 }
 
-test("appearance follows the system until overridden and keeps the choice after reload", async ({ page }, testInfo) => {
+test("appearance uses the system initially, toggles with the keyboard, and keeps the choice after reload", async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("/");
-  const appearance = page.getByRole("combobox", { name: "Appearance", exact: true });
-  await expect(appearance).toHaveValue("system");
+  const switchToLight = page.getByRole("button", { name: "Switch to light mode", exact: true });
+  const switchToDark = page.getByRole("button", { name: "Switch to dark mode", exact: true });
   await expectTheme(page, "dark");
+  await expect(switchToLight).toBeEnabled();
+  await expect(switchToLight).toHaveAttribute("title", "Switch to light mode");
+  await expect(switchToLight.locator("svg.lucide-sun")).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Appearance", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Username", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("dark-sign-in.png"), fullPage: true });
 
   await page.emulateMedia({ colorScheme: "light" });
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expectTheme(page, "dark");
+  await switchToLight.focus();
+  await switchToLight.press("Enter");
   await expectTheme(page, "light");
-  await appearance.selectOption("dark");
+  await expect(switchToDark).toHaveAttribute("title", "Switch to dark mode");
+  await expect(switchToDark.locator("svg.lucide-moon")).toBeVisible();
+  expect(await page.evaluate(key => localStorage.getItem(key), storageKey)).toBe("light");
+  await switchToDark.focus();
+  await switchToDark.press("Space");
   await expectTheme(page, "dark");
   expect(await page.evaluate(key => localStorage.getItem(key), storageKey)).toBe("dark");
   await page.reload();
-  await expect(appearance).toHaveValue("dark");
+  await expect(switchToLight).toBeVisible();
   await expectTheme(page, "dark");
 
-  await appearance.selectOption("light");
+  await switchToLight.click();
   await page.emulateMedia({ colorScheme: "dark" });
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expectTheme(page, "light");
   await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#fafafa");
   await page.reload();
-  await expect(appearance).toHaveValue("light");
-  await expectTheme(page, "light");
-  await appearance.selectOption("system");
-  await expectTheme(page, "dark");
-  await page.emulateMedia({ colorScheme: "light" });
+  await expect(switchToDark).toBeVisible();
   await expectTheme(page, "light");
   expect(errors).toEqual([]);
 });
 
-test("saved appearance and invalid-preference fallback apply before hydration", async ({ context }) => {
-  for (const saved of ["dark", "invalid-preference"]) {
+test("saved appearance and legacy or invalid-preference fallbacks apply before hydration", async ({ context }) => {
+  for (const saved of ["dark", "light", "invalid-preference", "system"]) {
     const page = await context.newPage();
     try {
       await page.emulateMedia({ colorScheme: saved === "dark" ? "light" : "dark" });
@@ -78,8 +87,8 @@ test("saved appearance and invalid-preference fallback apply before hydration", 
       // The inline head initializer still runs, but React cannot hydrate the page.
       await page.route(/\/_next\/.*\.js(?:\?|$)/, route => route.abort());
       await page.goto("/", { waitUntil: "domcontentloaded" });
-      await expectTheme(page, "dark");
-      await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#141414");
+      await expectTheme(page, saved === "light" ? "light" : "dark");
+      await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", saved === "light" ? "#fafafa" : "#141414");
     } finally {
       await page.close();
     }
@@ -97,39 +106,40 @@ test("appearance still works when browser storage is unavailable", async ({ page
   });
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("/");
-  const appearance = page.getByRole("combobox", { name: "Appearance", exact: true });
   await expectTheme(page, "dark");
-  await appearance.selectOption("light");
+  await page.getByRole("button", { name: "Switch to light mode", exact: true }).click();
   await expectTheme(page, "light");
-  await appearance.selectOption("system");
+  await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
   await expectTheme(page, "dark");
   await page.emulateMedia({ colorScheme: "light" });
-  await expectTheme(page, "light");
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expectTheme(page, "dark");
   await expect(page.getByLabel("Username", { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
 test("appearance persists on invitations and synchronizes between tabs", async ({ page, context }, testInfo) => {
-  await page.emulateMedia({ colorScheme: "dark" });
+  await page.emulateMedia({ colorScheme: "light" });
   await page.goto("/");
-  await page.getByRole("combobox", { name: "Appearance", exact: true }).selectOption("dark");
+  await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
   await page.goto("/join");
   await expectTheme(page, "dark");
-  await expect(page.getByRole("combobox", { name: "Appearance", exact: true })).toHaveValue("dark");
+  await expect(page.getByRole("button", { name: "Switch to light mode", exact: true })).toBeVisible();
+  await page.emulateMedia({ colorScheme: "dark" });
   await expect(page.getByRole("heading", { name: "Invitation unavailable", exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("dark-invitation.png"), fullPage: true });
 
   const otherTab = await context.newPage();
   try {
-    await otherTab.emulateMedia({ colorScheme: "dark" });
+    await otherTab.emulateMedia({ colorScheme: "light" });
     await otherTab.goto("/");
-    await expect(otherTab.getByRole("combobox", { name: "Appearance", exact: true })).toHaveValue("dark");
-    await otherTab.getByRole("combobox", { name: "Appearance", exact: true }).selectOption("light");
+    await expectTheme(otherTab, "dark");
+    await otherTab.getByRole("button", { name: "Switch to light mode", exact: true }).click();
     await expectTheme(page, "light");
-    await expect(page.getByRole("combobox", { name: "Appearance", exact: true })).toHaveValue("light");
+    await expect(page.getByRole("button", { name: "Switch to dark mode", exact: true })).toBeVisible();
     await otherTab.evaluate(key => localStorage.removeItem(key), storageKey);
     await expectTheme(page, "dark");
-    await expect(page.getByRole("combobox", { name: "Appearance", exact: true })).toHaveValue("system");
+    await expect(page.getByRole("button", { name: "Switch to light mode", exact: true })).toBeVisible();
   } finally {
     await otherTab.close();
   }
@@ -143,27 +153,33 @@ test("dark admin controls and account dialog remain readable and fit a 320px scr
     data: { username: "admin", password: "test-only-comic-shelf-passphrase" },
   });
   expect(session.status()).toBe(200);
+  await page.emulateMedia({ colorScheme: "light" });
   await page.goto("/");
-  await page.getByRole("combobox", { name: "Appearance", exact: true }).selectOption("dark");
+  await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
   await expect(page.getByRole("button", { name: "Account settings", exact: true })).toBeVisible();
   await expectTheme(page, "dark");
   await page.screenshot({ path: testInfo.outputPath("dark-library.png"), fullPage: true });
 
-  await page.setViewportSize({ width: 320, height: 800 });
   const header = page.locator(".shelf-header");
-  for (const control of [
-    header.getByRole("combobox", { name: "Appearance", exact: true }),
+  const controls = [
     header.getByRole("button", { name: "Upload PDF", exact: true }),
     header.getByRole("button", { name: "Account settings", exact: true }),
+    header.getByRole("button", { name: "Switch to light mode", exact: true }),
     header.getByRole("button", { name: "Sign out", exact: true }),
-  ]) {
-    await expect(control).toBeVisible();
-    const bounds = await control.boundingBox();
-    expect(bounds!.x).toBeGreaterThanOrEqual(0);
-    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(320);
+  ];
+  for (const width of [page.viewportSize()!.width, 320]) {
+    await page.setViewportSize({ width, height: 800 });
+    let previousRight = 0;
+    for (const control of controls) {
+      await expect(control).toBeVisible();
+      const bounds = await control.boundingBox();
+      expect(bounds!.x).toBeGreaterThanOrEqual(previousRight);
+      previousRight = bounds!.x + bounds!.width;
+      expect(previousRight).toBeLessThanOrEqual(width);
+    }
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-  await expectReadableDarkControl(page.getByRole("combobox", { name: "Appearance", exact: true }));
+  await expectReadableDarkControl(header.getByRole("button", { name: "Switch to light mode", exact: true }));
   await page.screenshot({ path: testInfo.outputPath("dark-library-320px.png"), fullPage: true });
   await page.getByRole("button", { name: "Account settings", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Account settings", exact: true });
@@ -190,8 +206,9 @@ test("dark appearance preserves cover and PDF colors and the reader stays dark i
   const { book } = await upload.json();
   let otherTab: Page | undefined;
   try {
+    await page.emulateMedia({ colorScheme: "light" });
     await page.goto("/");
-    await page.getByRole("combobox", { name: "Appearance", exact: true }).selectOption("dark");
+    await page.getByRole("button", { name: "Switch to dark mode", exact: true }).click();
     const cover = page.getByRole("link", { name: "Read Theme colors", exact: true }).locator("img");
     await expect.poll(() => cover.evaluate(element => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
     expect(await cover.evaluate(element => {
@@ -229,7 +246,7 @@ test("dark appearance preserves cover and PDF colors and the reader stays dark i
 
     otherTab = await context.newPage();
     await otherTab.goto("/");
-    await otherTab.getByRole("combobox", { name: "Appearance", exact: true }).selectOption("light");
+    await otherTab.getByRole("button", { name: "Switch to light mode", exact: true }).click();
     await expectTheme(page, "light");
     await expect(page.locator(".reader-root")).toHaveCSS("background-color", "rgb(20, 20, 20)");
     await expect(page.locator(".reader-root")).toHaveCSS("color-scheme", "dark");
