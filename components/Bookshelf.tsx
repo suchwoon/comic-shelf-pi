@@ -13,6 +13,7 @@ import { UploadError, uploadPdf } from "@/lib/client/upload";
 import { isDialogBackdropClick } from "@/lib/client/dialog";
 import AccountPanel from "@/components/AccountPanel";
 import ThemeSelector from "@/components/ThemeSelector";
+import ChatPanel from "@/components/ChatPanel";
 
 type UploadStatus = "queued" | "uploading" | "checking" | "done" | "error";
 interface UploadItem {
@@ -436,6 +437,7 @@ export default function Bookshelf() {
       </header>
       {isAdmin && <input ref={inputRef} type="file" accept=".pdf,application/pdf" multiple className="sr-only" tabIndex={-1} aria-label="Choose PDF files" onChange={event => { enqueue(event.target.files); event.currentTarget.value = ""; }} />}
       <main className="shelf-main">{content}</main>
+      {session?.authenticated && session.user && <ChatPanel key={session.user.id} user={session.user} onUnauthorized={requireLogin} />}
       {dragging && <div className="shelf-drop-overlay" aria-hidden="true"><div><ArrowDownToLine size={32} strokeWidth={1.4} /><h2>Drop PDFs to upload</h2><p>Add files to your library.</p></div></div>}
       {isAdmin && action && <BookDialog key={`${action.kind}-${action.book.id}`} action={action} onClose={() => setAction(null)} onUnauthorized={requireLogin} onSaved={book => { setBooks(previous => book ? previous.map(existing => existing.id === book.id ? book : existing) : previous.filter(existing => existing.id !== action.book.id)); setNotice(book ? "Book renamed." : "Book deleted."); }} />}
       {accountOpen && session?.user && <AccountPanel user={session.user} onClose={() => setAccountOpen(false)} onUnauthorized={requireLogin} onSession={setSession} />}

@@ -45,6 +45,17 @@ export interface AccountInvitation {
   createdAt: string;
 }
 
+export interface ChatMessage {
+  id: number;
+  userId: string;
+  username: string;
+  body: string;
+  createdAt: string;
+}
+
+export const CHAT_MESSAGE_LIMIT = 1000;
+export const CHAT_HISTORY_LIMIT = 50;
+
 // Keep every upload request comfortably below common proxy request limits.
 export const UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 

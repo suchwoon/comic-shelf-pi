@@ -1,6 +1,7 @@
 @import "../components/bookshelf.css";
 @import "../components/reader.css";
 @import "../components/account.css";
+@import "../components/chat.css";
 
 :root {
   color-scheme: light;
