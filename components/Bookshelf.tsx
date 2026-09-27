@@ -433,7 +433,7 @@ export default function Bookshelf() {
                   {(isAdmin || book.lastReadAt) && <details className="shelf-book-menu">
                     <summary className="shelf-icon-button" aria-label={isAdmin ? `Manage ${book.title}` : `Reading options for ${book.title}`}><Ellipsis size={18} /></summary>
                     <div className="shelf-book-menu-options">
-                      {book.lastReadAt && <button type="button" onClick={event => openAction("clearHistory", book, event.currentTarget)}><RotateCcw size={14} />Clear my reading history</button>}
+                      {book.lastReadAt && <button type="button" onClick={event => openAction("clearHistory", book, event.currentTarget)}><RotateCcw size={14} />Clear history</button>}
                       {isAdmin && <><button type="button" onClick={event => openAction("rename", book, event.currentTarget)}><Pencil size={14} />Rename</button><button type="button" className="shelf-menu-danger" onClick={event => openAction("delete", book, event.currentTarget)}><Trash2 size={14} />Delete book</button></>}
                     </div>
                   </details>}</div>

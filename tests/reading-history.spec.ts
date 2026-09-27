@@ -73,7 +73,7 @@ test("a reader clears personal history, keeps shared books, and restarts on page
     await reader.getByLabel(`Reading options for ${book.title}`, { exact: true }).click();
     await expect(card.getByRole("button", { name: "Rename", exact: true })).toHaveCount(0);
     await expect(card.getByRole("button", { name: "Delete book", exact: true })).toHaveCount(0);
-    await card.getByRole("button", { name: "Clear my reading history", exact: true }).click();
+    await card.getByRole("button", { name: "Clear history", exact: true }).click();
     const dialog = reader.getByRole("dialog", { name: "Clear reading history?", exact: true });
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Clear history", exact: true }).click();
@@ -127,7 +127,7 @@ test("clearing history can be cancelled and a failed confirmation can be retried
     await page.goto("/");
     const openClear = async () => {
       await page.getByLabel(`Manage ${book.title}`, { exact: true }).click();
-      await page.getByRole("button", { name: "Clear my reading history", exact: true }).click();
+      await page.getByRole("button", { name: "Clear history", exact: true }).click();
     };
     const dialog = page.getByRole("dialog", { name: "Clear reading history?", exact: true });
     await openClear();
@@ -149,7 +149,7 @@ test("clearing history can be cancelled and a failed confirmation can be retried
     expect(clearAttempts).toBe(2);
     expect(await getBook(page.request, book.id)).toEqual({ ...before, currentPage: 1, lastReadAt: null });
     await page.getByLabel(`Manage ${book.title}`, { exact: true }).click();
-    await expect(page.getByRole("button", { name: "Clear my reading history", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Clear history", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Rename", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Delete book", exact: true })).toBeVisible();
   } finally {
