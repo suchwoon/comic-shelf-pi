@@ -3,7 +3,6 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { openReaderSettings } from "./reader-helpers";
 
 let fixtureDirectory: string;
 let fixture: Buffer;
@@ -73,10 +72,8 @@ test("touch areas navigate with hidden controls, follow reading direction, and r
 
     await tapArea(page, "Show controls (center area)");
     await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeVisible();
-    await openReaderSettings(page);
     await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).tap();
     await expect(page.getByRole("button", { name: "Reading direction: Right to left", exact: true })).toBeVisible();
-    await page.keyboard.press("Escape");
     await tapArea(page, "Hide controls (center area)");
     await tapArea(page, "Next page (left area)");
     await expectSavedPage(page, endpoint, 2);
@@ -121,8 +118,9 @@ test("mobile controls overlay the same fitted canvas in portrait and landscape",
       await expect(page.getByRole("link", { name: "Back to library", exact: true })).toBeVisible();
       expect(await page.getByTestId("pdf-page").boundingBox()).toEqual(before);
       expect(await canvas!.evaluate(element => element.isConnected)).toBe(true);
-      await page.getByRole("button", { name: "Hide controls", exact: true }).tap();
+      await tapArea(page, "Hide controls (center area)");
       const center = page.getByRole("button", { name: "Show controls (center area)", exact: true });
+      await center.focus();
       await expect(center).toBeFocused();
       await expect(center).toHaveAttribute("aria-expanded", "false");
       await center.press("Enter");
@@ -177,6 +175,7 @@ test("dragging, long presses, cancelled touches, multitouch, and zoom do not tur
         send("click", kind === "long" ? 602 : 101);
       }, gesture);
       await expect(page.getByTestId("pdf-page"), `${gesture} should not turn a page`).toHaveAttribute("data-page", "1");
+      await expect(page.locator(".reader-root")).toHaveClass(/reader-controls-hidden/);
       // A rejected gesture must not swallow the next deliberate tap.
       await tapArea(page, "Next page (right area)");
       await expectSavedPage(page, endpoint, 2);
@@ -191,7 +190,7 @@ test("dragging, long presses, cancelled touches, multitouch, and zoom do not tur
       await tapArea(page, "Next page (right area)");
       await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "1");
       await tapArea(page, "Show controls (center area)");
-      await expect(page.getByRole("button", { name: "Hide controls", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Two-page view", exact: true })).toBeVisible();
       await tapArea(page, "Hide controls (center area)");
     } finally {
       await page.evaluate(() => Reflect.deleteProperty(window.visualViewport!, "scale"));
@@ -203,23 +202,77 @@ test("dragging, long presses, cancelled touches, multitouch, and zoom do not tur
   }
 });
 
-test("desktop keeps visible controls and keyboard navigation even at a narrow width", async ({ page }, testInfo) => {
+test("desktop page clicks toggle controls, retain the canvas, and allow keyboard navigation at a narrow width", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "Requires a mouse context");
   await page.setViewportSize({ width: 390, height: 844 });
   const endpoint = await openBook(page);
   try {
-    await expect(page.locator(".reader-root")).not.toHaveClass(/reader-touch/);
+    const reader = page.locator(".reader-root");
+    const next = page.getByRole("button", { name: "Next page", exact: true });
+    await expect(reader).not.toHaveClass(/reader-touch/);
     await expect(page.getByRole("button", { name: /\((?:left|center|right) area\)/ })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeVisible();
-    await page.getByTestId("pdf-page").click();
+    await expect(next).toBeVisible();
+    const canvas = await page.getByTestId("pdf-page").elementHandle();
+    const bounds = (await page.getByTestId("pdf-page").boundingBox())!;
+    // A real click over the visible page hits the invisible page-area button.
+    await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await expect(next).toBeHidden();
     await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "1");
-    await page.getByRole("button", { name: "Next page", exact: true }).click();
+    expect(await canvas!.evaluate(element => element.isConnected)).toBe(true);
+    expect(await page.getByTestId("pdf-page").boundingBox()).toEqual(bounds);
+    const show = page.getByRole("button", { name: "Show controls (page area)", exact: true });
+    await expect(show).toHaveAttribute("aria-expanded", "false");
+    await show.press("Enter");
+    await expect(next).toBeVisible();
+    const hide = page.getByRole("button", { name: "Hide controls (page area)", exact: true });
+    await expect(hide).toHaveAttribute("aria-expanded", "true");
+    await hide.press("Space");
+    await expect(next).toBeHidden();
+    await page.keyboard.press("h");
+    await expect(next).toBeVisible();
+    expect(await canvas!.evaluate(element => element.isConnected)).toBe(true);
+    expect(await page.getByTestId("pdf-page").boundingBox()).toEqual(bounds);
+    await canvas!.dispose();
+
+    await next.click();
     await expectSavedPage(page, endpoint, 2);
+    await expect(next).toBeVisible();
     await page.keyboard.press("ArrowRight");
     await expectSavedPage(page, endpoint, 3);
-    await page.getByRole("button", { name: "Hide controls", exact: true }).click();
-    await page.getByRole("button", { name: "Show controls", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeVisible();
+    await page.keyboard.press("h");
+    await expect(next).toBeHidden();
+    await page.getByRole("button", { name: "Show controls (page area)", exact: true }).click();
+    await expect(next).toBeVisible();
+  } finally {
+    await removeBook(page, endpoint);
+  }
+});
+
+test("desktop dragging, long presses, and right clicks do not toggle controls", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Requires a mouse context");
+  const endpoint = await openBook(page);
+  try {
+    const reader = page.locator(".reader-root");
+    const hide = page.getByRole("button", { name: "Hide controls (page area)", exact: true });
+    const bounds = (await hide.boundingBox())!;
+    const x = bounds.x + bounds.width / 2;
+    const y = bounds.y + bounds.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 40, y, { steps: 4 });
+    await page.mouse.move(x, y, { steps: 4 });
+    await page.mouse.up();
+    await expect(reader).not.toHaveClass(/reader-controls-hidden/);
+    await hide.click({ delay: 650 });
+    await expect(reader).not.toHaveClass(/reader-controls-hidden/);
+    await hide.click({ button: "right" });
+    await expect(reader).not.toHaveClass(/reader-controls-hidden/);
+    await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "1");
+    // Rejected gestures must not consume the next short stationary click.
+    await hide.click();
+    await expect(reader).toHaveClass(/reader-controls-hidden/);
+    await page.getByRole("button", { name: "Show controls (page area)", exact: true }).click();
+    await expect(reader).not.toHaveClass(/reader-controls-hidden/);
   } finally {
     await removeBook(page, endpoint);
   }

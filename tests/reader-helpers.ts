@@ -1,18 +1,24 @@
 import { expect, type Page } from "@playwright/test";
 
-export async function revealReaderControls(page: Page) {
+async function setReaderControls(page: Page, visible: boolean) {
   const reader = page.locator(".reader-root");
   await expect(reader).toBeVisible();
-  if (await reader.evaluate(element => element.classList.contains("reader-touch"))) {
-    const reveal = page.getByRole("button", { name: "Show controls (center area)", exact: true });
-    if (await reveal.isVisible()) await reveal.tap();
+  const touchReader = await reader.evaluate(element => element.classList.contains("reader-touch"));
+  const toggle = page.getByRole("button", {
+    name: `${visible ? "Show" : "Hide"} controls (${touchReader ? "center" : "page"} area)`, exact: true,
+  });
+  if (await toggle.isVisible()) {
+    if (touchReader) await toggle.tap();
+    else await toggle.click();
   }
-  await expect(page.getByRole("button", { name: "Hide controls", exact: true })).toBeVisible();
+  if (visible) await expect(page.getByRole("button", { name: "Two-page view", exact: true })).toBeVisible();
+  else await expect(reader).toHaveClass(/reader-controls-hidden/);
 }
 
-export async function openReaderSettings(page: Page) {
-  await revealReaderControls(page);
-  const toggle = page.getByRole("button", { name: "Reading settings", exact: true });
-  if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
-  await expect(page.getByRole("dialog", { name: "Reading settings", exact: true })).toBeVisible();
+export async function revealReaderControls(page: Page) {
+  await setReaderControls(page, true);
+}
+
+export async function hideReaderControls(page: Page) {
+  await setReaderControls(page, false);
 }

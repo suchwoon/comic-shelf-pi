@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { openReaderSettings, revealReaderControls } from "./reader-helpers";
+import { revealReaderControls } from "./reader-helpers";
 
 const fixture = join(tmpdir(), `comic-shelf-fixture-${process.pid}.pdf`);
 const scanFixture = join(tmpdir(), `comic-shelf-scan-fixture-${process.pid}.pdf`);
@@ -58,7 +58,6 @@ test("reads scanned page images, normalizes legacy width fit, and restores readi
   const dimensions = await page.getByTestId("pdf-page").boundingBox();
   expect(dimensions!.width).toBeGreaterThan(dimensions!.height);
   await expectPageFits(page);
-  await openReaderSettings(page);
   await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).click();
   await page.getByRole("button", { name: "Next page", exact: true }).click({ clickCount: 3 });
   await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "7");
@@ -70,7 +69,6 @@ test("reads scanned page images, normalizes legacy width fit, and restores readi
   await page.reload();
   await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "7");
   await revealReaderControls(page);
-  await openReaderSettings(page);
   await expect(page.getByRole("button", { name: "Reading direction: Right to left", exact: true })).toBeVisible();
   await expectPageFits(page);
   expect(pageImages).toContain(`${endpoint}/pages/1`);

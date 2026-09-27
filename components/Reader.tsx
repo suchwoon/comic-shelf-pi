@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
-import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronLeft, ChevronRight, Columns2, Eye, EyeOff, LoaderCircle, Maximize, Minimize, RotateCcw, SlidersHorizontal, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronLeft, ChevronRight, Columns2, LoaderCircle, Maximize, Minimize, RotateCcw } from "lucide-react";
 import { ImagePageDocument, type PageDocument } from "@/lib/reader/page-document";
 import type { Book, ReadingDirection } from "@/lib/types";
 import { PdfPageCache } from "@/lib/reader/page-cache";
@@ -95,7 +95,6 @@ export default function Reader({ bookId }: { bookId: string }) {
   const [direction, setDirection] = useState<ReadingDirection>("ltr");
   const [twoPages, setTwoPages] = useState(false);
   const [controls, setControls] = useState(true);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [touchNavigation, setTouchNavigation] = useState(false);
   const [showTouchHint, setShowTouchHint] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
@@ -119,9 +118,6 @@ export default function Reader({ bookId }: { bookId: string }) {
   const canvasCenterRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const centerTapRef = useRef<HTMLButtonElement>(null);
-  const revealRef = useRef<HTMLButtonElement>(null);
-  const settingsButtonRef = useRef<HTMLButtonElement>(null);
-  const settingsPanelRef = useRef<HTMLDivElement>(null);
   const initialReadMarked = useRef(false);
   const tapStart = useRef<PageTap | null>(null);
   const tapClick = useRef<{ target: HTMLButtonElement; time: number } | null>(null);
@@ -167,10 +163,10 @@ export default function Reader({ bookId }: { bookId: string }) {
 
   const pageReady = renderedPage !== null;
   useEffect(() => {
-    if (!touchNavigation || !pageReady || !showTouchHint) return;
+    if (!pageReady || !showTouchHint) return;
     const timer = window.setTimeout(() => setShowTouchHint(false), 5000);
     return () => window.clearTimeout(timer);
-  }, [touchNavigation, pageReady, showTouchHint]);
+  }, [pageReady, showTouchHint]);
 
   useEffect(() => {
     let active = true;
@@ -305,37 +301,6 @@ export default function Reader({ bookId }: { bookId: string }) {
     return () => document.removeEventListener("fullscreenchange", update);
   }, []);
 
-  useEffect(() => {
-    if (!controls) setSettingsOpen(false);
-  }, [controls]);
-
-  useEffect(() => {
-    if (!settingsOpen || !controls) return;
-    const panel = settingsPanelRef.current;
-    (panel?.querySelector<HTMLButtonElement>(".reader-setting:not(:disabled)") ?? panel?.querySelector<HTMLButtonElement>("button"))?.focus({ preventScroll: true });
-    const outside = (event: Event) => {
-      const target = event.target;
-      if (target instanceof Node && !panel?.contains(target) && !settingsButtonRef.current?.contains(target)) {
-        setSettingsOpen(false);
-      }
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      setSettingsOpen(false);
-      settingsButtonRef.current?.focus({ preventScroll: true });
-    };
-    document.addEventListener("pointerdown", outside);
-    document.addEventListener("focusin", outside);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("pointerdown", outside);
-      document.removeEventListener("focusin", outside);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [settingsOpen, controls]);
-
   const goToPage = useCallback((nextPage: number) => {
     if (leavingRef.current || missing || !pageDocument || !Number.isFinite(nextPage)) return;
     const next = Math.max(1, Math.min(pageDocument.numPages, Math.trunc(nextPage)));
@@ -416,12 +381,15 @@ export default function Reader({ bookId }: { bookId: string }) {
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if (!pageDocument || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select, [contenteditable=true], .reader-settings-panel")) return;
+      if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select, [contenteditable=true]")) return;
       if (event.key === "ArrowRight") goRelative(direction === "ltr" ? 1 : -1);
       else if (event.key === "ArrowLeft") goRelative(direction === "ltr" ? -1 : 1);
       else if (event.key === "Home") goToPage(1);
       else if (event.key === "End") goToPage(pageDocument.numPages);
-      else if (event.key.toLowerCase() === "h") setControls(value => !value);
+      else if (event.key.toLowerCase() === "h") {
+        setControls(value => !value);
+        requestAnimationFrame(() => centerTapRef.current?.focus({ preventScroll: true }));
+      }
       else if (event.key.toLowerCase() === "f" && fullscreenAvailable) void toggleFullscreen();
       else return;
       event.preventDefault();
@@ -447,7 +415,7 @@ export default function Reader({ bookId }: { bookId: string }) {
     tapClick.current = null;
     const target = event.target instanceof Element ? event.target.closest<HTMLButtonElement>(".reader-tap-zone") : null;
     // A second finger anywhere in the reader cancels the whole gesture.
-    tapStart.current = touchNavigation && target && event.isPrimary && event.button === 0
+    tapStart.current = target && event.isPrimary && event.button === 0
       ? { pointerId: event.pointerId, x: event.clientX, y: event.clientY, time: event.timeStamp, target }
       : null;
   };
@@ -492,71 +460,51 @@ export default function Reader({ bookId }: { bookId: string }) {
       onPointerDownCapture={startTap} onPointerMoveCapture={moveTap} onPointerUpCapture={endTap} onPointerCancelCapture={cancelTap}>
       <header className="reader-heading">
         <div className="reader-heading-book">
-          <Link className="reader-back reader-glass" href="/" onClick={event => {
+          <Link className="reader-back reader-floating" href="/" onClick={event => {
             if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
             event.preventDefault();
             void backToLibrary();
           }} aria-label="Back to library" aria-busy={leaving}>
             {leaving ? <LoaderCircle className="reader-spin" size={18} /> : <ArrowLeft size={19} />}<span className="sr-only">{leaving ? "Saving…" : "Library"}</span>
           </Link>
-          <h1 className="reader-book-title reader-glass" title={book?.title}>{book?.title || "Opening book"}</h1>
+          <h1 className="reader-book-title reader-floating" title={book?.title}>{book?.title || "Opening book"}</h1>
         </div>
-        <div className="reader-heading-actions">
-          <button type="button" className="reader-icon-button reader-glass" ref={settingsButtonRef}
-            onClick={() => setSettingsOpen(value => !value)} aria-label="Reading settings" title="Reading settings"
-            aria-expanded={settingsOpen} aria-haspopup="dialog" aria-controls="reader-settings">
-            <SlidersHorizontal size={18} />
+        <div className="reader-heading-actions reader-floating" role="group" aria-label="Reading controls">
+          <button type="button" className="reader-icon-button reader-spread-toggle" onClick={toggleTwoPages}
+            disabled={!pageDocument || leaving || missing} aria-label="Two-page view" aria-pressed={twoPages}
+            title={twoPages ? "Switch to single-page view" : "Switch to two-page view"}>
+            <Columns2 size={19} />
           </button>
-          <button type="button" className="reader-icon-button reader-glass" onClick={() => {
-            setSettingsOpen(false);
-            setControls(false);
-            requestAnimationFrame(() => (centerTapRef.current ?? revealRef.current)?.focus({ preventScroll: true }));
-          }} aria-label="Hide controls" title="Hide controls (H)"><EyeOff size={18} /></button>
-          {settingsOpen && controls && <div id="reader-settings" className="reader-settings-panel reader-glass" ref={settingsPanelRef} role="dialog" aria-labelledby="reader-settings-title">
-            <div className="reader-settings-heading">
-              <h2 id="reader-settings-title">Reading settings</h2>
-              <button type="button" className="reader-icon-button" aria-label="Close reading settings" onClick={() => {
-                setSettingsOpen(false);
-                settingsButtonRef.current?.focus({ preventScroll: true });
-              }}><X size={17} /></button>
-            </div>
-            <button type="button" className="reader-setting reader-spread-toggle" onClick={toggleTwoPages}
-              disabled={!pageDocument || leaving || missing} aria-label="Two-page view" aria-pressed={twoPages}>
-              <Columns2 size={19} /><span><strong>Two-page view</strong><small>{twoPages ? "Two pages" : "Single page"}</small></span>
-              <span className="reader-setting-switch" aria-hidden="true"><span /></span>
-            </button>
-            <button type="button" className="reader-setting reader-direction" onClick={toggleDirection}
-              disabled={!pageDocument || leaving || missing} aria-label={`Reading direction: ${direction === "ltr" ? "Left to right" : "Right to left"}`}>
-              {direction === "ltr" ? <ArrowRight size={19} /> : <ArrowLeft size={19} />}
-              <span><strong>Reading direction</strong><small>{direction === "ltr" ? "Left to right" : "Right to left"}</small></span>
-            </button>
-            {fullscreenAvailable && <button type="button" className="reader-setting" onClick={() => void toggleFullscreen()}
-              aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"} title={fullscreen ? "Exit fullscreen (F)" : "Enter fullscreen (F)"}>
-              {fullscreen ? <Minimize size={19} /> : <Maximize size={19} />}<span><strong>Fullscreen</strong><small>{fullscreen ? "Return to window" : "Fill your screen"}</small></span><kbd>F</kbd>
-            </button>}
-          </div>}
+          <button type="button" className="reader-icon-button reader-direction" onClick={toggleDirection}
+            disabled={!pageDocument || leaving || missing} aria-label={`Reading direction: ${direction === "ltr" ? "Left to right" : "Right to left"}`}
+            title={direction === "ltr" ? "Read right to left" : "Read left to right"}>
+            {direction === "ltr" ? <ArrowRight size={19} /> : <ArrowLeft size={19} />}
+          </button>
+          {fullscreenAvailable && <button type="button" className="reader-icon-button" onClick={() => void toggleFullscreen()}
+            aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"} aria-pressed={fullscreen}
+            title={fullscreen ? "Exit fullscreen (F)" : "Enter fullscreen (F)"}>
+            {fullscreen ? <Minimize size={19} /> : <Maximize size={19} />}
+          </button>}
         </div>
       </header>
-
-      {!controls && !touchNavigation && <button type="button" className="reader-reveal reader-icon-button reader-glass" ref={revealRef} onClick={() => {
-        setControls(true);
-        requestAnimationFrame(() => settingsButtonRef.current?.focus({ preventScroll: true }));
-      }} aria-label="Show controls" title="Show controls (H)"><Eye size={18} /></button>}
 
       <main className="reader-workspace" aria-label="Comic reader">
         <div className="reader-canvas-scroll" ref={viewportRef} tabIndex={0} aria-label="Comic page">
           <div ref={canvasCenterRef} className="reader-canvas-center"><div className={`reader-page-surface${renderError ? " reader-page-pending" : ""}`} ref={surfaceRef} aria-busy={rendering} /></div>
         </div>
-        {touchNavigation && <div className="reader-tap-zones" role="group" aria-label="Touch navigation">
-          <button type="button" className="reader-tap-zone" onClick={event => activateTap(event, "left")}
+        <div className="reader-tap-zones" role="group" aria-label={touchNavigation ? "Touch navigation" : "Reader controls"}>
+          {touchNavigation && <button type="button" className="reader-tap-zone" onClick={event => activateTap(event, "left")}
             disabled={!pageDocument || !pageReady || missing || (leftIsNext ? atEnd : atStart)}
-            aria-label={`${leftIsNext ? "Next" : "Previous"} page (left area)`} />
+            aria-label={`${leftIsNext ? "Next" : "Previous"} page (left area)`} />}
           <button type="button" className="reader-tap-zone" ref={centerTapRef} onClick={event => activateTap(event, "center")}
-            aria-label={`${controls ? "Hide" : "Show"} controls (center area)`} aria-expanded={controls} />
-          <button type="button" className="reader-tap-zone" onClick={event => activateTap(event, "right")}
+            aria-label={`${controls ? "Hide" : "Show"} controls (${touchNavigation ? "center" : "page"} area)`} aria-expanded={controls} />
+          {touchNavigation && <button type="button" className="reader-tap-zone" onClick={event => activateTap(event, "right")}
             disabled={!pageDocument || !pageReady || missing || (leftIsNext ? atStart : atEnd)}
-            aria-label={`${leftIsNext ? "Previous" : "Next"} page (right area)`} />
-        </div>}
+            aria-label={`${leftIsNext ? "Previous" : "Next"} page (right area)`} />}
+        </div>
+        {!touchNavigation && pageReady && showTouchHint && controls && <p className="reader-screen-hint" role="status">
+          Click the page to hide controls. Press H to toggle.
+        </p>}
         {touchNavigation && pageReady && showTouchHint && !controls && <p className="reader-touch-hint" role="status">
           Tap the sides to turn pages. Tap the center for controls.
         </p>}
@@ -577,7 +525,7 @@ export default function Reader({ bookId }: { bookId: string }) {
       </main>
 
       <footer className="reader-footer">
-        <div className="reader-save-status reader-glass" role="status">
+        <div className="reader-save-status reader-floating" role="status">
           {missing ? <span>Book deleted</span> : saveStatus === "error" ? (
             <button type="button" onClick={() => void flush()} title="Progress could not be saved. Retry" aria-label="Save failed. Retry"><RotateCcw size={14} /><span>Retry save</span></button>
           ) : saveStatus === "saving" ? (
@@ -586,7 +534,7 @@ export default function Reader({ bookId }: { bookId: string }) {
             <><Check size={14} /><span>Saved</span></>
           ) : <span className="reader-save-idle">Auto-save on</span>}
         </div>
-        <div className="reader-pagination reader-glass" aria-label="Page navigation">
+        <div className="reader-pagination reader-floating" aria-label="Page navigation">
           <button type="button" className="reader-page-button" disabled={!pageDocument || missing || (leftIsNext ? atEnd : atStart)} onClick={() => goRelative(leftIsNext ? 1 : -1)} aria-label={leftIsNext ? "Next page" : "Previous page"} title={leftIsNext ? "Next page (←)" : "Previous page (←)"}>
             <ChevronLeft size={20} />
           </button>

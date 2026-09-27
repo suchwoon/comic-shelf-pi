@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { revealReaderControls } from "./reader-helpers";
+import { hideReaderControls, revealReaderControls } from "./reader-helpers";
 
 type ObservedWindow = Window & {
   __readerTestCanvases: HTMLCanvasElement[];
@@ -192,8 +192,8 @@ test("resizing replaces outdated canvases and rapid navigation displays the fina
     const beforeHideCanvas = await visibleCanvas.elementHandle();
     const beforeHideBounds = await visibleCanvas.boundingBox();
     const touchReader = await page.locator(".reader-root").evaluate(element => element.classList.contains("reader-touch"));
-    await page.getByRole("button", { name: "Hide controls", exact: true }).click();
-    const reveal = page.getByRole("button", { name: touchReader ? "Show controls (center area)" : "Show controls", exact: true });
+    await hideReaderControls(page);
+    const reveal = page.getByRole("button", { name: touchReader ? "Show controls (center area)" : "Show controls (page area)", exact: true });
     await expect(reveal).toBeVisible();
     await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeHidden();
     expect(await beforeHideCanvas!.evaluate(canvas => canvas.isConnected)).toBe(true);

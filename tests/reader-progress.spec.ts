@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { PDFDocument } from "pdf-lib";
-import { openReaderSettings, revealReaderControls } from "./reader-helpers";
+import { revealReaderControls } from "./reader-helpers";
 
 async function openBook(page: Page) {
   const session = await page.request.post("/api/session", { data: { username: "admin", password: "test-only-comic-shelf-passphrase" } });
@@ -110,7 +110,6 @@ test("a failed page keeps the visible reading position when changing direction a
     const error = page.locator(".reader-workspace").getByRole("alert");
     await expect(error).toContainText("Unable to load this page");
     await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "1");
-    await openReaderSettings(page);
     await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).click();
     await expect.poll(async () => (await (await page.request.get(book.endpoint)).json()).book.direction).toBe("rtl");
     expect(await savedPage(page, book.endpoint)).toBe(1);
@@ -178,7 +177,6 @@ test("a page arriving during the library save does not replace or save the depar
     await route.fulfill({ response });
   });
   try {
-    await openReaderSettings(page);
     await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).click();
     await saveStarted.promise;
     await page.getByRole("textbox", { name: "Page number", exact: true }).fill("4");
@@ -223,7 +221,6 @@ test("a book deleted while reading does not trap library navigation after a prog
     deleted = true;
     const missingProgress = page.waitForResponse(response =>
       new URL(response.url()).pathname === `${book.endpoint}/progress` && response.status() === 404);
-    await openReaderSettings(page);
     await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).click();
     await missingProgress;
     await expect(page.getByText("This book is no longer in your library.", { exact: true })).toBeVisible();
