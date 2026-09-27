@@ -25,7 +25,7 @@
 .shelf-account-list-actions { display: flex; flex-shrink: 0; gap: 8px; }
 .shelf-account-list .shelf-button { min-height: 36px; font-size: 11px; padding: 8px 10px; }
 .shelf-button-block { border-color: var(--line); background: var(--surface); color: var(--danger); }
-.shelf-button-block:hover:not(:disabled) { background: #fff5f4; }
+.shelf-button-block:hover:not(:disabled) { background: var(--danger-light); }
 .shelf-invitation-created { margin-top: 17px; padding: 18px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); }
 .shelf-invitation-created > strong { display: block; font-size: 13px; font-weight: 550; overflow-wrap: anywhere; }
 .shelf-invitation-created > p { margin: 8px 0 16px; font-size: 12px; line-height: 1.7; color: var(--muted); }

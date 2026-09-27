@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowRight, CircleAlert, LoaderCircle, RotateCcw } from "lucide-react";
+import ThemeSelector from "@/components/ThemeSelector";
 
 type Invitation = { kind: "invite" | "reset"; username: string | null; expiresAt: string };
 
@@ -93,7 +94,7 @@ export default function JoinPage() {
 
   const resetting = invitation?.kind === "reset";
   return <div className="shelf-app">
-    <header className="shelf-header"><div className="shelf-header-inner"><Link className="shelf-brand" href="/" aria-label="Shelf home">Shelf.</Link><Link className="shelf-button shelf-button-light" href="/">Sign in</Link></div></header>
+    <header className="shelf-header"><div className="shelf-header-inner"><Link className="shelf-brand" href="/" aria-label="Shelf home">Shelf.</Link><div className="shelf-header-actions"><ThemeSelector /><Link className="shelf-button shelf-button-light" href="/">Sign in</Link></div></div></header>
     <main className="shelf-main">
       {loading ? <div className="shelf-loading" role="status"><LoaderCircle size={20} className="shelf-spin" />Checking invitation</div> : loadError ? <section className="shelf-state-card">
         <CircleAlert size={28} strokeWidth={1.5} /><h1>Invitation unavailable</h1><p role="alert">{loadError}</p>

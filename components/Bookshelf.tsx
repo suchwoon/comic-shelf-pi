@@ -12,6 +12,7 @@ import type { Book, LibraryResponse, SessionResponse } from "@/lib/types";
 import { UploadError, uploadPdf } from "@/lib/client/upload";
 import { isDialogBackdropClick } from "@/lib/client/dialog";
 import AccountPanel from "@/components/AccountPanel";
+import ThemeSelector from "@/components/ThemeSelector";
 
 type UploadStatus = "queued" | "uploading" | "checking" | "done" | "error";
 interface UploadItem {
@@ -426,8 +427,8 @@ export default function Bookshelf() {
       <header className="shelf-header">
         <div className="shelf-header-inner">
           <Link className="shelf-brand" href="/" aria-label="Shelf home">Shelf.</Link>
-          <div className="shelf-header-actions">{session?.authenticated && session.user && <>
-            {isAdmin && <button className="shelf-button shelf-button-primary shelf-header-upload" type="button" onClick={pickFiles} disabled={!canUpload}><Plus size={16} /><span>Upload PDF</span></button>}
+          <div className="shelf-header-actions"><ThemeSelector />{session?.authenticated && session.user && <>
+            {isAdmin && <button className="shelf-button shelf-button-primary shelf-header-upload" type="button" title="Upload PDF" onClick={pickFiles} disabled={!canUpload}><Plus size={16} /><span>Upload PDF</span></button>}
             <button className="shelf-button shelf-button-light shelf-account-button" type="button" onClick={() => setAccountOpen(true)} aria-label="Account settings" title={`Account settings · ${session.user.username}`}><UserRound size={16} /><span>{session.user.username}</span></button>
             <button className="shelf-icon-button shelf-logout" type="button" onClick={() => void logout()} aria-label="Sign out" title={pendingCount ? "Wait for uploads to finish before signing out" : "Sign out"} disabled={!!pendingCount || logoutBusy}><LogOut size={17} /></button>
           </>}</div>
