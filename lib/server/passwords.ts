@@ -7,8 +7,8 @@ const encode = (salt: Buffer, key: Buffer) => `scrypt$32768$8$3$${salt.toString(
 const DUMMY = encode(Buffer.alloc(16), Buffer.alloc(64));
 
 export function validatePassword(value: unknown): string {
-  if (typeof value !== "string" || value.length < 12 || value.length > 128) {
-    throw new ApiError(400, "Use a password with 12 to 128 characters. Spaces are preserved.");
+  if (typeof value !== "string" || value.length < 8 || value.length > 128) {
+    throw new ApiError(400, "Use a password with 8 to 128 characters. Spaces are preserved.");
   }
   return value;
 }

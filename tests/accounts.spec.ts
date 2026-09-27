@@ -3,7 +3,7 @@ import { PDFDocument } from "pdf-lib";
 import { revealReaderControls } from "./reader-helpers";
 
 const adminPassword = "test-only-comic-shelf-passphrase";
-const readerPassword = "private-reader-test-passphrase";
+const readerPassword = "reader12";
 
 async function adminLogin(request: APIRequestContext) {
   const response = await request.post("/api/session", { data: { username: "admin", password: adminPassword } });
@@ -172,8 +172,8 @@ test("members change their password and administrators provide one-use recovery 
     await reader.getByRole("button", { name: "Account settings", exact: true }).click();
     await expect(reader.getByRole("button", { name: "Create invitation", exact: true })).toHaveCount(0);
     await reader.getByLabel("Current password", { exact: true }).fill(readerPassword);
-    await reader.getByLabel("New password", { exact: true }).fill("changed-private-test-password");
-    await reader.getByLabel("Confirm new password", { exact: true }).fill("changed-private-test-password");
+    await reader.getByLabel("New password", { exact: true }).fill("changed8");
+    await reader.getByLabel("Confirm new password", { exact: true }).fill("changed8");
     const changed = reader.waitForResponse(response => response.url().endsWith("/api/session") && response.request().method() === "PATCH");
     await reader.getByRole("button", { name: "Change password", exact: true }).click();
     expect((await changed).status()).toBe(200);
@@ -184,12 +184,12 @@ test("members change their password and administrators provide one-use recovery 
     const recoveryToken = (await recovery.json()).token;
     await reader.goto(`/join#token=${recoveryToken}`);
     await expect(reader.getByLabel("Username", { exact: true })).toHaveValue(username);
-    await reader.getByLabel("Password", { exact: true }).fill("recovered-private-test-password");
-    await reader.getByLabel("Confirm password", { exact: true }).fill("recovered-private-test-password");
+    await reader.getByLabel("Password", { exact: true }).fill("reset123");
+    await reader.getByLabel("Confirm password", { exact: true }).fill("reset123");
     await reader.getByRole("button", { name: "Save new password", exact: true }).click();
     await expect(reader).toHaveURL("http://127.0.0.1:3210/");
     expect((await context.request.post("/api/register", { data: { token: recoveryToken, username, password: readerPassword } })).ok()).toBe(false);
-    expect((await secondContext.request.post("/api/session", { data: { username, password: "recovered-private-test-password" } })).status()).toBe(200);
+    expect((await secondContext.request.post("/api/session", { data: { username, password: "reset123" } })).status()).toBe(200);
     expect((await secondContext.request.delete("/api/session")).status()).toBe(200);
     expect((await secondContext.request.get("/api/books")).status()).toBe(401);
   } finally {

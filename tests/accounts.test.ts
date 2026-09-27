@@ -20,7 +20,7 @@ import { POST as registerPOST } from "../app/api/register/route";
 import { POST as inspectPOST } from "../app/api/invitations/inspect/route";
 
 const initialPassword = "old-short";
-const readerPassword = "reader password 123";
+const readerPassword = "reader12";
 const originalEnv = { DATA_DIR: process.env.DATA_DIR, BOOKS_PASSWORD: process.env.BOOKS_PASSWORD, ADMIN_USERNAME: process.env.ADMIN_USERNAME, PUBLIC_ORIGIN: process.env.PUBLIC_ORIGIN };
 let root: string;
 const errorStatus = (status: number) => (error: unknown) => error instanceof ApiError && error.status === status;
@@ -163,10 +163,12 @@ it("validates usernames and passwords without consuming an invitation on a rejec
   for (const username of ["a", "white space", "한글계정", "-starts-wrong", "a".repeat(33)]) {
     await assert.rejects(registerAccount(invitation.token, username, readerPassword), errorStatus(400));
   }
-  for (const password of ["short", "x".repeat(129), null]) {
+  for (const password of ["x".repeat(7), "x".repeat(129), null]) {
     await assert.rejects(registerAccount(invitation.token, "valid.name", password), errorStatus(400));
   }
   assert.equal(inspectInvitation(invitation.token).kind, "invite");
+  assert.equal(validatePassword(readerPassword), readerPassword);
+  assert.equal(validatePassword("x".repeat(128)), "x".repeat(128));
   const spaced = "  twelve chars  ";
   assert.equal(validatePassword(spaced), spaced);
   const joined = await registerAccount(invitation.token, "Mixed.Case", spaced);
@@ -196,9 +198,12 @@ it("changes passwords with the current password and invalidates every old sessio
   await administrator();
   const member = await reader();
   const second = await login(request(), member.user.username, readerPassword);
-  const changedPassword = "changed password 456";
+  const changedPassword = "changed8";
   const bad = await sessionPATCH(request("/api/session", "PATCH", { currentPassword: "wrong", newPassword: changedPassword }, member.cookie));
   assert.equal(bad.status, 400);
+  assert.equal(authenticated(request(undefined, "GET", undefined, member.cookie)), true);
+  const tooShort = await sessionPATCH(request("/api/session", "PATCH", { currentPassword: readerPassword, newPassword: "x".repeat(7) }, member.cookie));
+  assert.equal(tooShort.status, 400);
   assert.equal(authenticated(request(undefined, "GET", undefined, member.cookie)), true);
   const response = await sessionPATCH(request("/api/session", "PATCH", { currentPassword: readerPassword, newPassword: changedPassword }, member.cookie));
   assert.equal(response.status, 200);
@@ -213,15 +218,19 @@ it("resets only the invited reader, fixes its username, and invalidates old pass
   const admin = await administrator();
   const member = await reader();
   const reset = createInvitation(member.user.id);
+  const resetPassword = "reset123";
   assert.deepEqual(inspectInvitation(reset.token), { kind: "reset", username: member.user.username, expiresAt: reset.invitation.expiresAt });
   assert.throws(() => createInvitation(admin.user.id), errorStatus(400));
-  await assert.rejects(registerAccount(reset.token, "someone-else", "reset password 789"), errorStatus(400));
-  const changed = await register(request(), reset.token, member.user.username, "reset password 789");
+  await assert.rejects(registerAccount(reset.token, "someone-else", resetPassword), errorStatus(400));
+  await assert.rejects(registerAccount(reset.token, member.user.username, "x".repeat(7)), errorStatus(400));
+  assert.equal(inspectInvitation(reset.token).kind, "reset");
+  const changed = await register(request(), reset.token, member.user.username, resetPassword);
   assert.equal(changed.user.id, member.user.id);
   assert.equal(changed.user.role, "reader");
   assert.equal(authenticated(request(undefined, "GET", undefined, member.cookie)), false);
   assert.equal(authenticated(request(undefined, "GET", undefined, changed.cookie)), true);
   await assert.rejects(signIn(member.user.username, readerPassword), errorStatus(401));
+  assert.equal((await signIn(member.user.username, resetPassword)).user.id, member.user.id);
   assert.throws(() => inspectInvitation(reset.token), errorStatus(400));
   const invalidated = createInvitation(member.user.id);
   setUserDisabled(member.user.id, true);
@@ -258,7 +267,7 @@ it("recovers only the existing administrator using the standalone Node script an
   const member = await reader();
   await mkdir(join(root, "scripts"));
   await copyFile(join(process.cwd(), "scripts/reset-admin-password.mjs"), join(root, "scripts/reset-admin-password.mjs"));
-  const recovered = "locally recovered password";
+  const recovered = "recover8";
   await writeFile(join(root, ".env.local"), `DATA_DIR=${root}\nADMIN_USERNAME=admin\nBOOKS_PASSWORD=${recovered}\n`, { mode: 0o600 });
   const { stdout } = await promisify(execFile)(process.execPath, [join(root, "scripts/reset-admin-password.mjs")]);
   assert.match(stdout, /Administrator password updated/);

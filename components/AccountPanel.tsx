@@ -88,8 +88,8 @@ export default function AccountPanel({ user, onClose, onUnauthorized, onSession 
     if (busy) return;
     setError("");
     setNotice("");
-    if (newPassword.length < 12 || newPassword.length > 128) {
-      setError("Choose a password between 12 and 128 characters.");
+    if (newPassword.length < 8 || newPassword.length > 128) {
+      setError("Choose a password between 8 and 128 characters.");
       return;
     }
     if (newPassword !== confirmation) {
@@ -201,9 +201,9 @@ export default function AccountPanel({ user, onClose, onUnauthorized, onSession 
         {section === "password" ? <form className="shelf-account-password" onSubmit={changePassword}>
           <input type="text" name="username" autoComplete="username" value={user.username} readOnly hidden />
           <label className="shelf-field-label">Current password<input type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} required disabled={!!busy} /></label>
-          <label className="shelf-field-label">New password<input type="password" autoComplete="new-password" minLength={12} maxLength={128} value={newPassword} onChange={event => setNewPassword(event.target.value)} aria-describedby="shelf-password-hint" required disabled={!!busy} /></label>
-          <p id="shelf-password-hint" className="shelf-field-hint">Use 12–128 characters. Spaces are allowed.</p>
-          <label className="shelf-field-label">Confirm new password<input type="password" autoComplete="new-password" minLength={12} maxLength={128} value={confirmation} onChange={event => setConfirmation(event.target.value)} required disabled={!!busy} /></label>
+          <label className="shelf-field-label">New password<input type="password" autoComplete="new-password" minLength={8} maxLength={128} value={newPassword} onChange={event => setNewPassword(event.target.value)} aria-describedby="shelf-password-hint" required disabled={!!busy} /></label>
+          <p id="shelf-password-hint" className="shelf-field-hint">Use 8–128 characters. Spaces are allowed.</p>
+          <label className="shelf-field-label">Confirm new password<input type="password" autoComplete="new-password" minLength={8} maxLength={128} value={confirmation} onChange={event => setConfirmation(event.target.value)} required disabled={!!busy} /></label>
           <div className="shelf-dialog-actions"><button type="submit" className="shelf-button shelf-button-primary" disabled={!!busy || !currentPassword || !newPassword || !confirmation}>{busy === "password" && <LoaderCircle size={16} className="shelf-spin" />}Change password</button></div>
         </form> : <div className="shelf-member-management">
           <section className="shelf-account-section" aria-labelledby="shelf-invite-heading">

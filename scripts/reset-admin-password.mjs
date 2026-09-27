@@ -8,8 +8,8 @@ import { parseEnv, promisify } from "node:util";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const values = parseEnv(await readFile(resolve(root, ".env.local"), "utf8"));
 const password = values.BOOKS_PASSWORD;
-if (typeof password !== "string" || password.length < 12 || password.length > 128) {
-  throw new Error("Set BOOKS_PASSWORD in .env.local to a password with 12 to 128 characters before recovery.");
+if (typeof password !== "string" || password.length < 8 || password.length > 128) {
+  throw new Error("Set BOOKS_PASSWORD in .env.local to a password with 8 to 128 characters before recovery.");
 }
 const database = resolve(root, values.DATA_DIR || "data", "library.sqlite");
 await access(database);

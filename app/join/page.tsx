@@ -69,8 +69,8 @@ export default function JoinPage() {
     event.preventDefault();
     if (busy || !invitation) return;
     setError("");
-    if (password.length < 12 || password.length > 128) {
-      setError("Choose a password between 12 and 128 characters.");
+    if (password.length < 8 || password.length > 128) {
+      setError("Choose a password between 8 and 128 characters.");
       return;
     }
     if (password !== confirmation) {
@@ -104,9 +104,9 @@ export default function JoinPage() {
           <p>{resetting ? "Choose a new password to access your account again." : "Create your account to read books and save your own reading progress."}</p>
           <label className="shelf-field-label">Username<input autoComplete="username" autoCapitalize="none" spellCheck={false} value={username} onChange={event => setUsername(event.target.value)} readOnly={resetting} disabled={busy} autoFocus={!resetting} minLength={3} maxLength={32} pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{2,31}" aria-describedby={resetting ? undefined : "shelf-username-hint"} required /></label>
           {!resetting && <p id="shelf-username-hint" className="shelf-field-hint">3–32 characters. Start with a letter or number; dots, underscores and hyphens are allowed.</p>}
-          <label className="shelf-field-label">Password<input type="password" autoComplete="new-password" minLength={12} maxLength={128} value={password} onChange={event => setPassword(event.target.value)} disabled={busy} autoFocus={resetting} aria-describedby="shelf-join-password-hint" required /></label>
-          <p id="shelf-join-password-hint" className="shelf-field-hint">Use 12–128 characters. Spaces are allowed.</p>
-          <label className="shelf-field-label">Confirm password<input type="password" autoComplete="new-password" minLength={12} maxLength={128} value={confirmation} onChange={event => setConfirmation(event.target.value)} disabled={busy} required /></label>
+          <label className="shelf-field-label">Password<input type="password" autoComplete="new-password" minLength={8} maxLength={128} value={password} onChange={event => setPassword(event.target.value)} disabled={busy} autoFocus={resetting} aria-describedby="shelf-join-password-hint" required /></label>
+          <p id="shelf-join-password-hint" className="shelf-field-hint">Use 8–128 characters. Spaces are allowed.</p>
+          <label className="shelf-field-label">Confirm password<input type="password" autoComplete="new-password" minLength={8} maxLength={128} value={confirmation} onChange={event => setConfirmation(event.target.value)} disabled={busy} required /></label>
           {error && <p className="shelf-form-error" role="alert"><CircleAlert size={16} />{error}</p>}
           <button type="submit" className="shelf-button shelf-button-primary" disabled={busy || !username.trim() || !password || !confirmation}>{busy && <LoaderCircle size={16} className="shelf-spin" />}{resetting ? "Save new password" : "Create account"}<ArrowRight size={16} /></button>
         </form>

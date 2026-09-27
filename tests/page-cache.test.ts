@@ -161,8 +161,20 @@ function fixture(t: TestContext, options: {
     cache.commit(canvas);
     return canvas as unknown as FakeCanvas;
   }
+  async function showSpread(page: number, nextLayout = layout) {
+    const requested = cache.requestSpread(page, nextLayout);
+    let ready = false;
+    void requested.then(() => { ready = true; }, () => { ready = true; });
+    await until(() => {
+      for (const render of renders) if (!render.settled) render.complete();
+      return ready;
+    }, `spread containing page ${page} was never ready`);
+    const result = await requested;
+    cache.commitSpread(result.canvases);
+    return { pages: result.pages, canvases: result.canvases as unknown as FakeCanvas[] };
+  }
   return {
-    cache, canvases, renders, pageRequests, pageSignals, renderFor, show,
+    cache, canvases, renders, pageRequests, pageSignals, renderFor, show, showSpread,
     blockPage(page: number) {
       const gate = deferred<void>();
       pageGates.set(page, gate);
@@ -382,5 +394,199 @@ describe("PDF page preparation and canvas lifecycle", { timeout: 20_000 }, () =>
     await nextTurn();
     await f.show(3, large);
     assert.ok(f.peakPixels <= 16_000_000);
+  });
+});
+
+describe("two-page spread preparation and canvas lifecycle", { timeout: 20_000 }, () => {
+  it("keeps the cover alone, uses fixed ascending pairs, and leaves the final unpaired page alone", async (t) => {
+    const f = fixture(t, { pages: 8 });
+    assert.deepEqual((await f.showSpread(1)).pages, [1]);
+    assert.deepEqual(f.pageRequests, [1], "the cover must not load an unrelated partner");
+    const pair = await f.showSpread(3);
+    assert.deepEqual(pair.pages, [2, 3]);
+    assert.deepEqual(pair.canvases.map(canvas => canvas.dataset.page), ["2", "3"]);
+    assert.deepEqual((await f.showSpread(2)).canvases, pair.canvases, "either member should reuse the same prepared spread");
+    assert.deepEqual((await f.showSpread(5)).pages, [4, 5]);
+    assert.deepEqual((await f.showSpread(6)).pages, [6, 7]);
+    assert.deepEqual((await f.showSpread(8)).pages, [8]);
+    assert.deepEqual(f.renders.map(render => render.page), [1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("fits the complete spread at a common height while preserving different aspect ratios", async (t) => {
+    const f = fixture(t, { pageSize: page => page === 2 ? [400, 800] : [600, 600] });
+    const spread = await f.showSpread(2);
+    const [first, second] = spread.canvases;
+    assert.equal(first.style.height, second.style.height);
+    assert.ok(Math.abs(parseFloat(first.style.width) + parseFloat(second.style.width) - layout.width) < 0.001);
+    assert.equal(parseFloat(first.style.width) / parseFloat(first.style.height), 0.5);
+    assert.equal(parseFloat(second.style.width) / parseFloat(second.style.height), 1);
+    assert.ok(parseFloat(first.style.height) <= layout.height);
+
+    const widthFit = await f.showSpread(2, { ...layout, fit: "width", height: 100, zoom: 1.5 });
+    assert.equal(widthFit.canvases[0].style.height, widthFit.canvases[1].style.height);
+    assert.ok(Math.abs(widthFit.canvases.reduce((sum, canvas) => sum + parseFloat(canvas.style.width), 0) - 1200) < 0.001);
+    assert.ok(parseFloat(widthFit.canvases[0].style.height) > 100, "width fit and zoom should retain vertical overflow");
+  });
+
+  it("shows the requested page alone when either member of its fixed pair is landscape", async (t) => {
+    const f = fixture(t, { pageSize: page => page === 3 || page === 4 ? [1200, 600] : [400, 600] });
+    assert.deepEqual((await f.showSpread(2)).pages, [2]);
+    const landscape = await f.showSpread(3);
+    assert.deepEqual(landscape.pages, [3]);
+    assert.equal(landscape.canvases[0].style.width, "800px");
+    assert.equal(landscape.canvases[0].style.height, "400px");
+    assert.deepEqual((await f.showSpread(5)).pages, [5], "the portrait page after a wide first member stays alone too");
+    assert.deepEqual((await f.showSpread(4)).pages, [4]);
+    assert.deepEqual((await f.showSpread(6)).pages, [6, 7], "a wide page must not shift subsequent fixed pairs");
+    assert.deepEqual(f.renders.map(render => render.page), [2, 3, 5, 4, 6, 7]);
+  });
+
+  it("retains both visible canvases until the complete replacement is ready and committed together", async (t) => {
+    const f = fixture(t);
+    const old = await f.showSpread(2);
+    const requested = f.cache.requestSpread(4, { ...layout, zoom: 1.2 });
+    let ready = false;
+    void requested.then(() => { ready = true; });
+    const first = await f.renderFor(4);
+    first.complete();
+    const second = await f.renderFor(5);
+    assert.equal(ready, false, "one rendered member is not a completed spread");
+    assert.ok(old.canvases.every(canvas => canvas.pixels > 0));
+    f.cache.commitSpread([first.canvas as unknown as HTMLCanvasElement]);
+    assert.ok(old.canvases.every(canvas => canvas.pixels > 0), "a partial commit must be ignored");
+    second.complete();
+    const replacement = await requested;
+    assert.ok(old.canvases.every(canvas => canvas.pixels > 0), "render completion must not clear either visible page");
+    f.cache.commitSpread(replacement.canvases);
+    assert.ok(old.canvases.every(canvas => canvas.pixels === 0), "obsolete layout canvases can be released after the atomic commit");
+    assert.ok(replacement.canvases.every(canvas => canvas.width > 0));
+  });
+
+  it("promotes a prefetched spread, reuses both canvases, and stays within the document bounds", async (t) => {
+    const f = fixture(t, { pages: 5 });
+    await f.showSpread(1);
+    f.cache.prefetchSpread(1, layout);
+    const first = await f.renderFor(2);
+    const requested = f.cache.requestSpread(2, layout);
+    await nextTurn();
+    assert.equal(first.cancelled, false);
+    first.complete();
+    const second = await f.renderFor(3);
+    second.complete();
+    const prepared = await requested;
+    f.cache.commitSpread(prepared.canvases);
+    assert.deepEqual(prepared.canvases, [first.canvas, second.canvas]);
+    f.cache.prefetchSpread(2, layout);
+    (await f.renderFor(4)).complete();
+    (await f.renderFor(5)).complete();
+    await nextTurn();
+    assert.deepEqual((await f.showSpread(5)).pages, [4, 5]);
+    assert.deepEqual(f.renders.map(render => render.page), [1, 2, 3, 4, 5]);
+    f.cache.prefetchSpread(5, layout);
+    await nextTurn();
+    assert.ok(f.pageRequests.every(page => page >= 1 && page <= 5));
+  });
+
+  it("cancels a partially prepared spread without freeing the still-rendering canvas early", async (t) => {
+    const f = fixture(t, { pages: 10 });
+    const visible = await f.showSpread(2);
+    const oldRequest = f.cache.requestSpread(4, layout);
+    const rejected = assert.rejects(oldRequest, abortError);
+    const first = await f.renderFor(4);
+    first.complete();
+    const second = await f.renderFor(5);
+    second.holdCancellation = true;
+    const latest = f.cache.requestSpread(10, layout);
+    await until(() => second.cancelled, "the superseded spread did not cancel its active member");
+    assert.ok(second.canvas.pixels > 0);
+    assert.ok(visible.canvases.every(canvas => canvas.pixels > 0));
+    assert.equal(f.renders.some(render => render.page === 10), false);
+    second.complete();
+    const wanted = await f.renderFor(10);
+    assert.equal(first.canvas.pixels, 0);
+    assert.equal(second.canvas.pixels, 0);
+    wanted.complete();
+    const replacement = await latest;
+    await rejected;
+    assert.deepEqual(replacement.pages, [10]);
+    f.cache.commitSpread(replacement.canvases);
+    assert.ok(visible.canvases.every(canvas => canvas.pixels === 0));
+  });
+
+  it("keeps the visible spread after a member fails and retries only the failed bitmap", async (t) => {
+    const f = fixture(t);
+    const visible = await f.showSpread(2);
+    const requested = f.cache.requestSpread(4, layout);
+    const rejected = assert.rejects(requested, /Temporary image failure/);
+    const first = await f.renderFor(4);
+    first.complete();
+    const failed = await f.renderFor(5);
+    failed.fail(new Error("Temporary image failure"));
+    await rejected;
+    assert.ok(visible.canvases.every(canvas => canvas.pixels > 0));
+    assert.equal(failed.canvas.pixels, 0);
+    const retry = f.cache.requestSpread(4, layout);
+    const second = await f.renderFor(5, 2);
+    second.complete();
+    const replacement = await retry;
+    assert.equal(replacement.canvases[0], first.canvas);
+    assert.equal(f.renders.filter(render => render.page === 4).length, 1);
+    f.cache.commitSpread(replacement.canvases);
+  });
+
+  it("cancels partner metadata lookups before rendering and disposes an in-flight spread safely", async (t) => {
+    const f = fixture(t);
+    const releasePartner = f.blockPage(3);
+    const oldRequest = f.cache.requestSpread(2, layout);
+    const superseded = assert.rejects(oldRequest, abortError);
+    await until(() => f.pageRequests.includes(3), "partner lookup did not begin");
+    assert.equal(f.canvases.length, 0, "pairing should be known before allocating the spread");
+    const latest = f.cache.requestSpread(6, layout);
+    assert.equal(f.pageSignals.at(-1)!.aborted, true);
+    releasePartner();
+    (await f.renderFor(6)).complete();
+    (await f.renderFor(7)).complete();
+    f.cache.commitSpread((await latest).canvases);
+    await superseded;
+    assert.equal(f.renders.some(render => render.page === 2 || render.page === 3), false);
+
+    const pending = f.cache.requestSpread(8, layout);
+    const disposed = assert.rejects(pending, abortError);
+    (await f.renderFor(8)).complete();
+    const active = await f.renderFor(9);
+    active.holdCancellation = true;
+    f.cache.dispose();
+    assert.equal(active.cancelled, true);
+    assert.ok(active.canvas.pixels > 0);
+    active.complete();
+    await disposed;
+    await nextTurn();
+    assert.ok(f.canvases.every(canvas => canvas.pixels === 0));
+    await assert.rejects(f.cache.requestSpread(1, layout), abortError);
+  });
+
+  it("bounds old and replacement spreads together during large-page navigation, resizing, and mode switches", async (t) => {
+    const f = fixture(t);
+    const large: PageLayout = { width: 20_000, height: 20_000, fit: "width", zoom: 2, pixelRatio: 4 };
+    await f.show(1, large);
+    for (const page of [2, 4, 6, 8]) {
+      const nextLayout = { ...large, zoom: page / 4 + 1 };
+      const spread = await f.showSpread(page, nextLayout);
+      assert.equal(spread.canvases.length, 2);
+      f.cache.prefetchSpread(page, nextLayout);
+      await nextTurn();
+      const background = f.renders.findLast(render => !render.settled);
+      if (background) background.complete();
+      await nextTurn();
+    }
+    await f.show(9, large);
+    await f.showSpread(10, large);
+    assert.ok(f.peakCanvases <= 4, `allocated ${f.peakCanvases} canvases at once`);
+    assert.ok(f.peakPixels <= 16_000_000, `allocated ${f.peakPixels} pixels at once`);
+    assert.ok(f.peakCanvasPixels <= 8_000_000, `one canvas held ${f.peakCanvasPixels} pixels`);
+    assert.ok(f.peakDimension <= 8192, `canvas dimension reached ${f.peakDimension}`);
+    f.cache.dispose();
+    await nextTurn();
+    assert.ok(f.canvases.every(canvas => canvas.pixels === 0));
   });
 });

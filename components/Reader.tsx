@@ -3,15 +3,17 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
-import { ArrowLeft, ArrowLeftRight, BookOpen, Check, ChevronLeft, ChevronRight, Eye, EyeOff, LoaderCircle, Maximize, Minimize, RotateCcw } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronLeft, ChevronRight, Columns2, Eye, EyeOff, LoaderCircle, Maximize, Minimize, RotateCcw } from "lucide-react";
 import { ImagePageDocument, type PageDocument } from "@/lib/reader/page-document";
 import type { Book, ReadingDirection } from "@/lib/types";
 import { PdfPageCache } from "@/lib/reader/page-cache";
+import { WheelPageGesture } from "@/lib/reader/wheel-navigation";
 import { ProgressSaveQueue, type ProgressSnapshot, type SaveStatus } from "@/lib/reader/progress";
 
 const PAGE_LOADING_DELAY_MS = 200;
 const TAP_MAX_DISTANCE = 12;
 const TAP_MAX_DURATION_MS = 500;
+const TWO_PAGE_STORAGE_KEY = "comic-shelf:two-page-view";
 
 type PageTap = { pointerId: number; x: number; y: number; time: number; target: HTMLButtonElement };
 
@@ -89,7 +91,9 @@ export default function Reader({ bookId }: { bookId: string }) {
   const [page, setPage] = useState(1);
   const requestedPage = useRef(1);
   const [pageInput, setPageInput] = useState("1");
+  const [editingPage, setEditingPage] = useState(false);
   const [direction, setDirection] = useState<ReadingDirection>("ltr");
+  const [twoPages, setTwoPages] = useState(false);
   const [controls, setControls] = useState(true);
   const [touchNavigation, setTouchNavigation] = useState(false);
   const [showTouchHint, setShowTouchHint] = useState(true);
@@ -104,6 +108,10 @@ export default function Reader({ bookId }: { bookId: string }) {
   const [renderError, setRenderError] = useState("");
   const [renderAttempt, setRenderAttempt] = useState(0);
   const [renderedPage, setRenderedPage] = useState<number | null>(null);
+  const [renderedPages, setRenderedPages] = useState<number[]>([]);
+  const displayedPages = useRef<number[]>([]);
+  const spreadNavigating = useRef(false);
+  const wheelGesture = useRef(new WheelPageGesture());
   const [size, setSize] = useState({ width: 0, height: 0 });
   const rootRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -132,6 +140,11 @@ export default function Reader({ bookId }: { bookId: string }) {
   };
 
   useEffect(() => () => pageCache?.dispose(), [pageCache]);
+
+  useEffect(() => {
+    try { setTwoPages(localStorage.getItem(TWO_PAGE_STORAGE_KEY) === "true"); }
+    catch { /* Reading remains available when browser storage is disabled. */ }
+  }, []);
 
   useEffect(() => {
     // Input capability also covers phones held in landscape, without changing
@@ -164,6 +177,8 @@ export default function Reader({ bookId }: { bookId: string }) {
     setBook(null);
     initialReadMarked.current = false;
     setRenderedPage(null);
+    setRenderedPages([]);
+    displayedPages.current = [];
     async function load() {
       try {
         const response = await fetch(`/api/books/${encodeURIComponent(bookId)}`, { signal: controller.signal, cache: "no-store" });
@@ -226,6 +241,7 @@ export default function Reader({ bookId }: { bookId: string }) {
     let active = true;
     const layout = { ...size, fit: "page" as const, zoom: 1, pixelRatio: window.devicePixelRatio || 1 };
     setRendering(true);
+    spreadNavigating.current = true;
     setShowPageLoading(false);
     setRenderError("");
     // A prepared page replaces the old canvas before this indicator is needed.
@@ -235,13 +251,19 @@ export default function Reader({ bookId }: { bookId: string }) {
     }, PAGE_LOADING_DELAY_MS);
     async function render() {
       try {
-        const canvas = await pageCache!.request(page, layout);
+        const spread = twoPages
+          ? await pageCache!.requestSpread(page, layout)
+          : { pages: [page], canvases: [await pageCache!.request(page, layout)] };
         if (!active || !surfaceRef.current || requestedPage.current !== page || leavingRef.current) return;
-        canvas.setAttribute("aria-label", `${book?.title ?? "Comic"}, page ${page}`);
-        surfaceRef.current.replaceChildren(canvas);
-        pageCache!.commit(canvas);
+        spread.canvases.forEach((canvas, index) => canvas.setAttribute("aria-label", `${book?.title ?? "Comic"}, page ${spread.pages[index]}`));
+        surfaceRef.current.replaceChildren(...(direction === "rtl" ? [...spread.canvases].reverse() : spread.canvases));
+        if (twoPages) pageCache!.commitSpread(spread.canvases);
+        else pageCache!.commit(spread.canvases[0]);
         window.clearTimeout(loadingTimer);
+        displayedPages.current = spread.pages;
+        setRenderedPages(spread.pages);
         setRenderedPage(page);
+        spreadNavigating.current = false;
         setRendering(false);
         setShowPageLoading(false);
         // Only displayed pages become bookmarks. Navigation may still be loading
@@ -252,18 +274,20 @@ export default function Reader({ bookId }: { bookId: string }) {
         }
         // Only a visible page schedules nearby work; stale navigation cannot
         // warm the wrong neighborhood or change the saved reading position.
-        pageCache!.prefetch(page, layout);
+        if (twoPages) pageCache!.prefetchSpread(page, layout);
+        else pageCache!.prefetch(page, layout);
       } catch (error) {
         if (!active || (error instanceof Error && ["AbortError", "RenderingCancelledException"].includes(error.name))) return;
         window.clearTimeout(loadingTimer);
         setRenderError("Try again or move to another page.");
+        spreadNavigating.current = false;
         setRendering(false);
         setShowPageLoading(false);
       }
     }
     void render();
     return () => { active = false; window.clearTimeout(loadingTimer); };
-  }, [pageCache, page, size, renderAttempt, book?.title, latest, change, leaving, missing]);
+  }, [pageCache, page, size, renderAttempt, book?.title, latest, change, leaving, missing, twoPages, direction]);
 
   useEffect(() => {
     setPageInput(String(page));
@@ -280,10 +304,63 @@ export default function Reader({ bookId }: { bookId: string }) {
   const goToPage = useCallback((nextPage: number) => {
     if (leavingRef.current || missing || !pageDocument || !Number.isFinite(nextPage)) return;
     const next = Math.max(1, Math.min(pageDocument.numPages, Math.trunc(nextPage)));
+    setPageInput(String(next));
+    if (next === requestedPage.current) {
+      if (renderError) setRenderAttempt(value => value + 1);
+      return;
+    }
+    if (twoPages) spreadNavigating.current = true;
     requestedPage.current = next;
     setPage(next);
-    setPageInput(String(next));
-  }, [pageDocument, missing]);
+  }, [pageDocument, missing, twoPages, renderError]);
+
+  const goRelative = useCallback((delta: -1 | 1) => {
+    if (!twoPages) {
+      goToPage(requestedPage.current + delta);
+      return;
+    }
+    // Wait for the current spread to determine its actual boundaries: a wide
+    // source page may stand alone. Never skip its portrait neighbor.
+    if (spreadNavigating.current || !displayedPages.current.length) return;
+    const boundary = delta > 0 ? displayedPages.current.at(-1)! : displayedPages.current[0];
+    goToPage(boundary + delta);
+  }, [goToPage, twoPages]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const workspace = viewport?.parentElement;
+    if (!viewport || !workspace) return;
+    const gesture = wheelGesture.current;
+    const wheel = (event: WheelEvent) => {
+      if (!pageDocument || leavingRef.current || missing || !displayedPages.current.length) return;
+      const control = event.target instanceof Element
+        ? event.target.closest("input, textarea, select, button, a, [contenteditable=true]") : null;
+      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || (window.visualViewport?.scale ?? 1) > 1.01
+        || (control && !control.classList.contains("reader-tap-zone"))) {
+        gesture.reset();
+        return;
+      }
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      if (viewport.scrollHeight > viewport.clientHeight + 1 || viewport.scrollWidth > viewport.clientWidth + 1) {
+        gesture.reset();
+        return;
+      }
+      event.preventDefault();
+      const delta = gesture.consume(event, viewport.clientHeight);
+      if (delta) goRelative(delta);
+    };
+    workspace.addEventListener("wheel", wheel, { passive: false });
+    return () => workspace.removeEventListener("wheel", wheel);
+  }, [goRelative, pageDocument, missing]);
+
+  const toggleTwoPages = () => {
+    const value = !twoPages;
+    spreadNavigating.current = true;
+    setTwoPages(value);
+    wheelGesture.current.reset();
+    try { localStorage.setItem(TWO_PAGE_STORAGE_KEY, String(value)); }
+    catch { /* The preference still applies for this reading session. */ }
+  };
 
   const toggleDirection = () => {
     const value = direction === "ltr" ? "rtl" : "ltr";
@@ -305,9 +382,8 @@ export default function Reader({ bookId }: { bookId: string }) {
     const keydown = (event: KeyboardEvent) => {
       if (!pageDocument || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select, [contenteditable=true]")) return;
-      const current = requestedPage.current;
-      if (event.key === "ArrowRight") goToPage(current + (direction === "ltr" ? 1 : -1));
-      else if (event.key === "ArrowLeft") goToPage(current + (direction === "ltr" ? -1 : 1));
+      if (event.key === "ArrowRight") goRelative(direction === "ltr" ? 1 : -1);
+      else if (event.key === "ArrowLeft") goRelative(direction === "ltr" ? -1 : 1);
       else if (event.key === "Home") goToPage(1);
       else if (event.key === "End") goToPage(pageDocument.numPages);
       else if (event.key.toLowerCase() === "h") setControls(value => !value);
@@ -317,11 +393,16 @@ export default function Reader({ bookId }: { bookId: string }) {
     };
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [pageDocument, direction, goToPage, fullscreenAvailable, toggleFullscreen]);
+  }, [pageDocument, direction, goToPage, goRelative, fullscreenAvailable, toggleFullscreen]);
 
   const pageCount = pageDocument?.numPages ?? book?.pageCount ?? 0;
   const bookError = missing ? "This book is no longer in your library." : loadError;
   const leftIsNext = direction === "rtl";
+  const firstVisiblePage = renderedPages[0] ?? page;
+  const lastVisiblePage = renderedPages.at(-1) ?? page;
+  const atStart = (twoPages ? firstVisiblePage : page) <= 1;
+  const atEnd = (twoPages ? lastVisiblePage : page) >= pageCount;
+  const pageRange = renderedPages.length > 1 ? `${firstVisiblePage}–${lastVisiblePage}` : "";
   const submitPage = () => {
     if (/^\d+$/.test(pageInput)) goToPage(Number(pageInput));
     else setPageInput(String(page));
@@ -367,7 +448,7 @@ export default function Reader({ bookId }: { bookId: string }) {
       if (event.detail !== 0 && (window.visualViewport?.scale ?? 1) > 1.01) return;
       setShowTouchHint(false);
       const next = (area === "left") === leftIsNext;
-      goToPage(requestedPage.current + (next ? 1 : -1));
+      goRelative(next ? 1 : -1);
     }
   };
 
@@ -384,8 +465,13 @@ export default function Reader({ bookId }: { bookId: string }) {
         </Link>
         <h1 className="reader-book-title" title={book?.title}>{book?.title || "Opening book"}</h1>
         <div className="reader-heading-actions">
-          <button type="button" className="reader-direction reader-button" onClick={toggleDirection} disabled={!pageDocument || leaving || missing} title="Change reading direction" aria-label={`Reading direction: ${direction === "ltr" ? "Left to right" : "Right to left"}`}>
-            <ArrowLeftRight size={17} /><span>{direction === "ltr" ? "Left to right" : "Right to left"}</span>
+          <button type="button" className="reader-icon-button reader-spread-toggle" onClick={toggleTwoPages}
+            disabled={!pageDocument || leaving || missing} aria-label="Two-page view" aria-pressed={twoPages}
+            title={twoPages ? "Two-page view. Click for one page." : "One-page view. Click for two pages."}>
+            <Columns2 size={18} />
+          </button>
+          <button type="button" className="reader-direction reader-button" onClick={toggleDirection} disabled={!pageDocument || leaving || missing} title={`Reading direction: ${direction === "ltr" ? "Left to right" : "Right to left"}. Click to switch.`} aria-label={`Reading direction: ${direction === "ltr" ? "Left to right" : "Right to left"}`}>
+            {direction === "ltr" ? <ArrowRight size={17} /> : <ArrowLeft size={17} />}<span>{direction === "ltr" ? "Left to right" : "Right to left"}</span>
           </button>
           <button type="button" className="reader-icon-button" onClick={() => {
             setControls(false);
@@ -402,12 +488,12 @@ export default function Reader({ bookId }: { bookId: string }) {
         </div>
         {touchNavigation && <div className="reader-tap-zones" role="group" aria-label="Touch navigation">
           <button type="button" className="reader-tap-zone" onClick={event => activateTap(event, "left")}
-            disabled={!pageDocument || !pageReady || missing || (leftIsNext ? page >= pageCount : page <= 1)}
+            disabled={!pageDocument || !pageReady || missing || (leftIsNext ? atEnd : atStart)}
             aria-label={`${leftIsNext ? "Next" : "Previous"} page (left area)`} />
           <button type="button" className="reader-tap-zone" ref={centerTapRef} onClick={event => activateTap(event, "center")}
             aria-label={`${controls ? "Hide" : "Show"} controls (center area)`} aria-expanded={controls} />
           <button type="button" className="reader-tap-zone" onClick={event => activateTap(event, "right")}
-            disabled={!pageDocument || !pageReady || missing || (leftIsNext ? page <= 1 : page >= pageCount)}
+            disabled={!pageDocument || !pageReady || missing || (leftIsNext ? atStart : atEnd)}
             aria-label={`${leftIsNext ? "Previous" : "Next"} page (right area)`} />
         </div>}
         {touchNavigation && pageReady && showTouchHint && !controls && <p className="reader-touch-hint" role="status">
@@ -440,16 +526,19 @@ export default function Reader({ bookId }: { bookId: string }) {
           ) : <span className="reader-save-idle">Auto-save on</span>}
         </div>
         <div className="reader-pagination" aria-label="Page navigation">
-          <button type="button" className="reader-page-button" disabled={!pageDocument || missing || (leftIsNext ? page >= pageCount : page <= 1)} onClick={() => goToPage(requestedPage.current + (leftIsNext ? 1 : -1))} aria-label={leftIsNext ? "Next page" : "Previous page"} title={leftIsNext ? "Next page (←)" : "Previous page (←)"}>
+          <button type="button" className="reader-page-button" disabled={!pageDocument || missing || (leftIsNext ? atEnd : atStart)} onClick={() => goRelative(leftIsNext ? 1 : -1)} aria-label={leftIsNext ? "Next page" : "Previous page"} title={leftIsNext ? "Next page (←)" : "Previous page (←)"}>
             <ChevronLeft size={19} /><span>{leftIsNext ? "Next" : "Previous"}</span>
           </button>
           <form className="reader-page-form" onSubmit={event => { event.preventDefault(); submitPage(); }}>
             <label className="sr-only" htmlFor="reader-page-input">Page number</label>
-            <input id="reader-page-input" type="text" inputMode="numeric" pattern="[0-9]*" value={pageInput} onChange={event => setPageInput(event.target.value)} onBlur={submitPage} onFocus={event => event.target.select()} disabled={!pageDocument || missing} autoComplete="off" maxLength={6} aria-describedby="reader-total-pages" />
+            <span className={`reader-page-input${pageRange && !editingPage ? " reader-page-input-range" : ""}`}>
+              <input id="reader-page-input" type="text" inputMode="numeric" pattern="[0-9]*" value={pageInput} onChange={event => setPageInput(event.target.value)} onBlur={() => { submitPage(); setEditingPage(false); }} onFocus={event => { setEditingPage(true); event.target.select(); }} disabled={!pageDocument || missing} autoComplete="off" maxLength={6} aria-describedby="reader-total-pages" />
+              {pageRange && !editingPage && <span aria-hidden="true">{pageRange}</span>}
+            </span>
             <span id="reader-total-pages">/ {pageCount || "—"}</span>
             <button type="submit" className="sr-only" disabled={!pageDocument || missing}>Go to page</button>
           </form>
-          <button type="button" className="reader-page-button" disabled={!pageDocument || missing || (leftIsNext ? page <= 1 : page >= pageCount)} onClick={() => goToPage(requestedPage.current + (leftIsNext ? -1 : 1))} aria-label={leftIsNext ? "Previous page" : "Next page"} title={leftIsNext ? "Previous page (→)" : "Next page (→)"}>
+          <button type="button" className="reader-page-button" disabled={!pageDocument || missing || (leftIsNext ? atStart : atEnd)} onClick={() => goRelative(leftIsNext ? -1 : 1)} aria-label={leftIsNext ? "Previous page" : "Next page"} title={leftIsNext ? "Previous page (→)" : "Next page (→)"}>
             <span>{leftIsNext ? "Previous" : "Next"}</span><ChevronRight size={19} />
           </button>
         </div>
@@ -459,7 +548,7 @@ export default function Reader({ bookId }: { bookId: string }) {
       </footer>
       {fullscreenError && <div className="reader-toast" role="status"><span>{fullscreenError}</span><button type="button" onClick={() => setFullscreenError("")}>Dismiss</button></div>}
       {navigationError && <div className="reader-toast" role="alert"><span>{navigationError}</span><button type="button" onClick={() => void backToLibrary()}>Try again</button></div>}
-      <span className="sr-only" aria-live="polite" aria-atomic="true">{pageDocument && !rendering && !bookError && !renderError ? `Page ${renderedPage} of ${pageCount}` : ""}</span>
+      <span className="sr-only" aria-live="polite" aria-atomic="true">{pageDocument && !rendering && !bookError && !renderError ? `${pageRange ? `Pages ${pageRange}` : `Page ${renderedPage}`} of ${pageCount}` : ""}</span>
     </div>
   );
 }

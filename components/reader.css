@@ -9,13 +9,14 @@
 .reader-button, .reader-icon-button, .reader-page-button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-height: 44px; border-radius: 6px; background: transparent; color: #a3a3a3; transition: background .15s, color .15s; }
 .reader-button { gap: 8px; padding: 0 12px; font-size: 12px; white-space: nowrap; }
 .reader-icon-button { width: 44px; padding: 0; }
+.reader-spread-toggle[aria-pressed="true"] { background: #ffffff14; color: #ededed; box-shadow: inset 0 0 0 1px #555; }
 .reader-button:hover:not(:disabled), .reader-icon-button:hover:not(:disabled), .reader-page-button:hover:not(:disabled) { background: #ffffff08; color: #fff; }
 .reader-root button:disabled { opacity: .3; }
 .reader-workspace { position: relative; flex: 1; min-height: 0; }
 .reader-canvas-scroll { width: 100%; height: 100%; overflow: auto; overscroll-behavior: contain; scrollbar-color: #404040 transparent; scrollbar-width: thin; }
 .reader-canvas-scroll:focus-visible { outline: 2px solid #737373; outline-offset: -3px; }
 .reader-canvas-center { display: flex; padding: 16px; min-width: 100%; min-height: 100%; width: max-content; }
-.reader-page-surface { margin: auto; flex: 0 0 auto; box-shadow: 0 2px 18px #0004; line-height: 0; }
+.reader-page-surface { display: flex; align-items: center; margin: auto; flex: 0 0 auto; box-shadow: 0 2px 18px #0004; line-height: 0; }
 .reader-page-surface canvas { display: block; max-width: none; background: #fff; }
 .reader-page-pending { opacity: .3; }
 .reader-loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 12px; min-width: 170px; padding: 22px; color: #a3a3a3; font-size: 12px; text-align: center; pointer-events: none; }
@@ -35,6 +36,9 @@
 .reader-page-button { gap: 5px; padding: 0 10px; font-size: 12px; }
 .reader-page-form { display: flex; align-items: center; justify-content: center; gap: 9px; min-width: 83px; color: #909090; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .reader-page-form input { appearance: textfield; width: 42px; height: 34px; padding: 0 3px; border: 1px solid #353535; border-radius: 5px; background: #1c1c1c; color: #ededed; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }
+.reader-page-input { position: relative; display: inline-flex; }
+.reader-page-input-range input { width: 72px; color: transparent; }
+.reader-page-input-range > span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #ededed; pointer-events: none; }
 .reader-save-status { display: flex; align-items: center; gap: 5px; min-width: 0; color: #909090; font-size: 11px; white-space: nowrap; }
 .reader-save-status button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0; background: transparent; color: #e5a3a3; font-size: 11px; }
 .reader-save-status button:hover { color: #fecaca; }
