@@ -96,6 +96,7 @@ export default function Reader({ bookId }: { bookId: string }) {
   const [size, setSize] = useState({ width: 0, height: 0 });
   const rootRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const canvasCenterRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const centerTapRef = useRef<HTMLButtonElement>(null);
   const initialReadMarked = useRef(false);
@@ -188,11 +189,16 @@ export default function Reader({ bookId }: { bookId: string }) {
 
   useEffect(() => {
     const element = viewportRef.current;
-    if (!element) return;
+    const center = canvasCenterRef.current;
+    if (!element || !center) return;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const measure = () => {
       const rect = element.getBoundingClientRect();
-      setSize({ width: Math.max(0, Math.floor(rect.width - 32)), height: Math.max(0, Math.floor(rect.height - 32)) });
+      const padding = getComputedStyle(center);
+      setSize({
+        width: Math.max(0, Math.floor(rect.width - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight))),
+        height: Math.max(0, Math.floor(rect.height - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom))),
+      });
     };
     measure();
     const observer = new ResizeObserver(() => {
@@ -201,7 +207,7 @@ export default function Reader({ bookId }: { bookId: string }) {
     });
     observer.observe(element);
     return () => { clearTimeout(timeout); observer.disconnect(); };
-  }, []);
+  }, [touchNavigation]);
 
   useEffect(() => {
     if (!pageCache || !size.width || !size.height) return;
@@ -379,7 +385,7 @@ export default function Reader({ bookId }: { bookId: string }) {
 
       <main className="reader-workspace" aria-label="Comic reader">
         <div className="reader-canvas-scroll" ref={viewportRef} tabIndex={0} aria-label="Comic page">
-          <div className="reader-canvas-center"><div className={`reader-page-surface${renderError ? " reader-page-pending" : ""}`} ref={surfaceRef} aria-busy={rendering} /></div>
+          <div ref={canvasCenterRef} className="reader-canvas-center"><div className={`reader-page-surface${renderError ? " reader-page-pending" : ""}`} ref={surfaceRef} aria-busy={rendering} /></div>
         </div>
         {touchNavigation && <div className="reader-tap-zones" role="group" aria-label="Touch navigation">
           <button type="button" className="reader-tap-zone" onClick={event => activateTap(event, "left")}

@@ -46,6 +46,7 @@
 .reader-toast { position: absolute; z-index: 10; bottom: calc(88px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 20px; width: max-content; max-width: calc(100% - 32px); padding: 12px 16px; border: 1px solid #404040; border-radius: 8px; background: #262626; color: #e5e5e5; font-size: 12px; line-height: 1.6; }
 .reader-toast button { padding: 3px; background: transparent; color: #a3a3a3; font-size: 12px; white-space: nowrap; }
 .reader-touch { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+.reader-touch .reader-canvas-center { padding: 0; }
 .reader-touch .reader-heading, .reader-touch .reader-footer { position: absolute; left: 0; right: 0; padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); background: #141414f5; }
 .reader-touch .reader-heading { top: 0; }
 .reader-touch .reader-footer { bottom: 0; }
