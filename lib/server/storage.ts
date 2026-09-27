@@ -123,6 +123,25 @@ export function validateTitle(title: unknown): string {
   return title.trim();
 }
 
+export function clearProgress(id: string, userId: string): Book {
+  ensureUserProgressTables();
+  const { db } = store();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    getBook(id, userId);
+    // Keep reader preferences and writer sequences so replayed saves cannot
+    // restore cleared history. A newer save starts recording progress again.
+    db.prepare("UPDATE user_progress SET currentPage = 1, lastReadAt = NULL WHERE userId = ? AND bookId = ?")
+      .run(userId, id);
+    const book = getBook(id, userId);
+    db.exec("COMMIT");
+    return book;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 export function updateProgress(id: string, input: Record<string, unknown>, userId?: string): Book {
   const keys = Object.keys(input);
   if (!keys.some(key => ["currentPage", "direction", "fit"].includes(key))

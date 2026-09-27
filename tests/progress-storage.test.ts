@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { getBook, listBooks, migrateLegacyProgress, store, updateProgress } from "../lib/server/storage";
+import { clearProgress, getBook, listBooks, migrateLegacyProgress, store, updateProgress } from "../lib/server/storage";
 import { ApiError } from "../lib/server/http";
 
 let dataDir: string;
@@ -150,6 +150,64 @@ it("writer sequence collisions across accounts do not suppress or overwrite thei
   updateProgress(id, { currentPage: 3, writerId: writerA, sequence: 2 }, bob);
   assert.equal(getBook(id, alice).currentPage, 6);
   assert.equal(getBook(id, bob).currentPage, 3);
+});
+
+it("clearing history resets only that account and book while keeping reading preferences", () => {
+  const id = createBook();
+  const anotherId = createBook();
+  const alice = createUser();
+  const bob = createUser();
+  updateProgress(id, { currentPage: 9 });
+  updateProgress(id, { currentPage: 7, direction: "rtl", fit: "width" }, alice);
+  updateProgress(id, { currentPage: 4 }, bob);
+  updateProgress(anotherId, { currentPage: 6 }, alice);
+  const bobBefore = getBook(id, bob);
+  const anotherBefore = getBook(anotherId, alice);
+  const legacyBefore = getBook(id);
+
+  const cleared = clearProgress(id, alice);
+  assert.deepEqual([cleared.currentPage, cleared.lastReadAt, cleared.direction, cleared.fit], [1, null, "rtl", "width"]);
+  assert.deepEqual(getBook(id, bob), bobBefore);
+  assert.deepEqual(getBook(anotherId, alice), anotherBefore);
+  assert.deepEqual(getBook(id), legacyBefore);
+  closeStore();
+  assert.deepEqual(getBook(id, alice), cleared);
+  assert.deepEqual(listBooks(alice).find(book => book.id === id), cleared);
+});
+
+it("clearing history preserves sequence protection and allows fresh progress afterwards", () => {
+  const id = createBook();
+  const user = createUser();
+  updateProgress(id, { currentPage: 4, writerId: writerA, sequence: 2 }, user);
+  clearProgress(id, user);
+  closeStore();
+  for (const sequence of [1, 2]) {
+    const ignored = updateProgress(id, { currentPage: 3, writerId: writerA, sequence }, user);
+    assert.equal(ignored.currentPage, 1);
+    assert.equal(ignored.lastReadAt, null);
+  }
+  const resumed = updateProgress(id, { currentPage: 5, writerId: writerA, sequence: 3 }, user);
+  assert.equal(resumed.currentPage, 5);
+  assert.ok(resumed.lastReadAt);
+  clearProgress(id, user);
+  const reopened = updateProgress(id, { currentPage: 2, writerId: writerB, sequence: 1 }, user);
+  assert.equal(reopened.currentPage, 2);
+  assert.ok(reopened.lastReadAt);
+});
+
+it("clearing history is idempotent, works for unread books and rejects missing books", () => {
+  const id = createBook();
+  const user = createUser();
+  const fresh = getBook(id, user);
+  assert.deepEqual(clearProgress(id, user), fresh);
+  updateProgress(id, { currentPage: 10 }, user);
+  const cleared = clearProgress(id, user);
+  assert.deepEqual(clearProgress(id, user), cleared);
+  for (const missingId of ["invalid", randomUUID()]) {
+    assert.throws(() => clearProgress(missingId, user), error => error instanceof ApiError && error.status === 404);
+  }
+  // Failed clears leave the connection ready for a subsequent transaction.
+  assert.deepEqual(clearProgress(id, user), cleared);
 });
 
 it("legacy progress migration is scoped to its administrator and is idempotent", () => {

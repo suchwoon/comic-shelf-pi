@@ -53,6 +53,7 @@
 .shelf-book-menu-options { position: absolute; top: 36px; right: 0; z-index: 5; min-width: 152px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); box-shadow: 0 4px 14px var(--menu-shadow); }
 .shelf-book-menu-options > button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px; border: 0; border-radius: 3px; background: transparent; font-size: 12px; text-align: left; color: var(--ink); }
 .shelf-book-menu-options > button:hover { background: var(--accent-light); }
+.shelf-book-menu-options > button > svg { flex-shrink: 0; }
 .shelf-book-menu-options > .shelf-menu-danger { color: var(--danger); }
 .shelf-book-reading-track { height: 2px; background: var(--reading-track); margin-top: 4px; overflow: hidden; }
 .shelf-book-reading-track > span { display: block; height: 100%; background: var(--muted); }

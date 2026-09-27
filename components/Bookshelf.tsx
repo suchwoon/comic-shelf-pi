@@ -24,7 +24,7 @@ interface UploadItem {
   error?: string;
   retryable?: boolean;
 }
-type BookAction = { kind: "rename" | "delete"; book: Book };
+type BookAction = { kind: "rename" | "delete" | "clearHistory"; book: Book };
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return "0 MB";
@@ -64,6 +64,8 @@ function BookDialog({ action, onClose, onSaved, onUnauthorized }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const deleting = action.kind === "delete";
+  const clearingHistory = action.kind === "clearHistory";
+  const renaming = action.kind === "rename";
   useEffect(() => {
     const dialog = dialogRef.current;
     dialog?.showModal();
@@ -74,13 +76,13 @@ function BookDialog({ action, onClose, onSaved, onUnauthorized }: {
     event.preventDefault();
     if (busy) return;
     const trimmed = title.trim();
-    if (!deleting && !trimmed) { setError("Enter a book title."); return; }
+    if (renaming && !trimmed) { setError("Enter a book title."); return; }
     setBusy(true);
     setError("");
     try {
-      const response = await fetch(`/api/books/${action.book.id}`, {
-        method: deleting ? "DELETE" : "PATCH",
-        ...(deleting ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: trimmed }) }),
+      const response = await fetch(`/api/books/${action.book.id}${clearingHistory ? "/progress" : ""}`, {
+        method: renaming ? "PATCH" : "DELETE",
+        ...(renaming ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: trimmed }) } : {}),
       });
       if (response.status === 401) { onUnauthorized(); onClose(); return; }
       if (!response.ok) throw new Error(await readError(response, "Could not save your changes. Please try again."));
@@ -98,14 +100,14 @@ function BookDialog({ action, onClose, onSaved, onUnauthorized }: {
       onClick={event => { if (!busy && isDialogBackdropClick(event)) onClose(); }}>
       <form onSubmit={submit}>
         <button className="shelf-icon-button shelf-dialog-close" type="button" aria-label="Close dialog" onClick={onClose} disabled={busy}><X size={21} /></button>
-        <h2 id="shelf-dialog-title">{deleting ? "Delete book?" : "Rename book"}</h2>
-        <p id="shelf-dialog-description">{deleting ? <>This will delete “{action.book.title}” and its reading progress.</> : "Choose a title for this book."}</p>
-        {!deleting && <label className="shelf-field-label">Book title<input autoFocus value={title} onChange={event => setTitle(event.target.value)} maxLength={160} disabled={busy} required /></label>}
+        <h2 id="shelf-dialog-title">{deleting ? "Delete book?" : clearingHistory ? "Clear reading history?" : "Rename book"}</h2>
+        <p id="shelf-dialog-description">{deleting ? <>This will delete “{action.book.title}” and its reading progress.</> : clearingHistory ? <>Clear your reading history for “{action.book.title}”? You'll start from page 1 next time. The book, your reading settings, and other members' progress will stay the same.</> : "Choose a title for this book."}</p>
+        {renaming && <label className="shelf-field-label">Book title<input autoFocus value={title} onChange={event => setTitle(event.target.value)} maxLength={160} disabled={busy} required /></label>}
         {error && <p className="shelf-form-error" role="alert"><CircleAlert size={16} />{error}</p>}
         <div className="shelf-dialog-actions">
-          <button type="button" className="shelf-button shelf-button-light" onClick={onClose} disabled={busy} autoFocus={deleting}>Cancel</button>
-          <button type="submit" className={`shelf-button ${deleting ? "shelf-button-danger" : "shelf-button-primary"}`} disabled={busy || (!deleting && !title.trim())}>
-            {busy && <LoaderCircle size={16} className="shelf-spin" />}{deleting ? "Delete" : "Save"}
+          <button type="button" className="shelf-button shelf-button-light" onClick={onClose} disabled={busy} autoFocus={!renaming}>Cancel</button>
+          <button type="submit" className={`shelf-button ${renaming ? "shelf-button-primary" : "shelf-button-danger"}`} disabled={busy || (renaming && !title.trim())}>
+            {busy && <LoaderCircle size={16} className="shelf-spin" />}{deleting ? "Delete" : clearingHistory ? "Clear history" : "Save"}
           </button>
         </div>
       </form>
@@ -164,6 +166,15 @@ export default function Bookshelf() {
   const processing = useRef(false);
   const activeUpload = useRef<AbortController | null>(null);
   const nextUploadId = useRef(0);
+  const clearedHistoryBook = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (action || !clearedHistoryBook.current) return;
+    // A reader's history menu disappears after clearing; restore focus to
+    // the book link that remains available instead of the removed trigger.
+    document.querySelector<HTMLAnchorElement>(`.shelf-book-link[href="/read/${clearedHistoryBook.current}"]`)?.focus();
+    clearedHistoryBook.current = null;
+  }, [action, books]);
 
   const requireLogin = useCallback(() => {
     activeUpload.current?.abort();
@@ -318,11 +329,22 @@ export default function Bookshelf() {
   const pickFiles = () => inputRef.current?.click();
 
   function openAction(kind: BookAction["kind"], book: Book, target: HTMLButtonElement) {
-    if (!isAdmin) return;
+    if (!session?.authenticated || (kind !== "clearHistory" && !isAdmin)) return;
     const menu = target.closest("details");
     menu?.removeAttribute("open");
     menu?.querySelector("summary")?.focus();
     setAction({ kind, book });
+  }
+
+  function saveBookAction(book: Book | null) {
+    if (!action) return;
+    setBooks(previous => book ? previous.map(existing => existing.id === book.id ? book : existing) : previous.filter(existing => existing.id !== action.book.id));
+    if (action.kind === "clearHistory") {
+      clearedHistoryBook.current = action.book.id;
+      setNotice("Reading history cleared.");
+    } else {
+      setNotice(book ? "Book renamed." : "Book deleted.");
+    }
   }
 
   function openReader(event: MouseEvent<HTMLAnchorElement>) {
@@ -408,9 +430,12 @@ export default function Bookshelf() {
                 <div className="shelf-book-meta">
                   <span>{book.pageCount.toLocaleString("en-US")} {book.pageCount === 1 ? "page" : "pages"}{book.lastReadAt && <> · {percentage}% read</>}</span>
                   <div className="shelf-book-tools">{isAdmin && <a className="shelf-icon-button" href={`/api/books/${book.id}/file`} download={book.originalName} aria-label={`Download ${book.title}`} title="Download PDF"><ArrowDownToLine size={15} /></a>}
-                  {isAdmin && <details className="shelf-book-menu">
-                    <summary className="shelf-icon-button" aria-label={`Manage ${book.title}`}><Ellipsis size={18} /></summary>
-                    <div className="shelf-book-menu-options"><button type="button" onClick={event => openAction("rename", book, event.currentTarget)}><Pencil size={14} />Rename</button><button type="button" className="shelf-menu-danger" onClick={event => openAction("delete", book, event.currentTarget)}><Trash2 size={14} />Delete book</button></div>
+                  {(isAdmin || book.lastReadAt) && <details className="shelf-book-menu">
+                    <summary className="shelf-icon-button" aria-label={isAdmin ? `Manage ${book.title}` : `Reading options for ${book.title}`}><Ellipsis size={18} /></summary>
+                    <div className="shelf-book-menu-options">
+                      {book.lastReadAt && <button type="button" onClick={event => openAction("clearHistory", book, event.currentTarget)}><RotateCcw size={14} />Clear my reading history</button>}
+                      {isAdmin && <><button type="button" onClick={event => openAction("rename", book, event.currentTarget)}><Pencil size={14} />Rename</button><button type="button" className="shelf-menu-danger" onClick={event => openAction("delete", book, event.currentTarget)}><Trash2 size={14} />Delete book</button></>}
+                    </div>
                   </details>}</div>
                 </div>
                 {book.lastReadAt && <div className="shelf-book-reading-track" aria-hidden="true"><span style={{ width: `${percentage}%` }} /></div>}
@@ -442,7 +467,7 @@ export default function Bookshelf() {
       <main className="shelf-main">{content}</main>
       {session?.authenticated && session.user && <ChatPanel key={session.user.id} user={session.user} onUnauthorized={requireLogin} />}
       {dragging && <div className="shelf-drop-overlay" aria-hidden="true"><div><ArrowDownToLine size={32} strokeWidth={1.4} /><h2>Drop PDFs to upload</h2><p>Add files to your library.</p></div></div>}
-      {isAdmin && action && <BookDialog key={`${action.kind}-${action.book.id}`} action={action} onClose={() => setAction(null)} onUnauthorized={requireLogin} onSaved={book => { setBooks(previous => book ? previous.map(existing => existing.id === book.id ? book : existing) : previous.filter(existing => existing.id !== action.book.id)); setNotice(book ? "Book renamed." : "Book deleted."); }} />}
+      {session?.authenticated && action && (isAdmin || action.kind === "clearHistory") && <BookDialog key={`${action.kind}-${action.book.id}`} action={action} onClose={() => setAction(null)} onUnauthorized={requireLogin} onSaved={saveBookAction} />}
       {accountOpen && session?.user && <AccountPanel user={session.user} onClose={() => setAccountOpen(false)} onUnauthorized={requireLogin} onSession={setSession} />}
       {notice && <div className="shelf-toast" role="status"><CheckCircle2 size={17} /><span>{notice}</span><button className="shelf-icon-button" type="button" aria-label="Dismiss notification" onClick={() => setNotice("")}><X size={16} /></button></div>}
     </div>
