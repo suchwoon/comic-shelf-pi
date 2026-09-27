@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { CheckCircle2, CircleAlert, Copy, KeyRound, LoaderCircle, Plus, RotateCcw, X } from "lucide-react";
 import type { AccountInvitation, AccountUser, ManagedUser, SessionResponse } from "@/lib/types";
+import { isDialogBackdropClick } from "@/lib/client/dialog";
 
 type CreatedInvitation = AccountInvitation & { link: string };
 
@@ -185,7 +186,7 @@ export default function AccountPanel({ user, onClose, onUnauthorized, onSession 
   return (
     <dialog ref={dialogRef} className="shelf-dialog shelf-account-dialog" aria-labelledby="shelf-account-title" aria-describedby="shelf-account-description"
       onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}
-      onClick={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+      onClick={event => { if (!busy && isDialogBackdropClick(event)) onClose(); }}>
       <div className="shelf-account-content">
         <button className="shelf-icon-button shelf-dialog-close" type="button" aria-label="Close account settings" onClick={onClose} disabled={!!busy}><X size={21} /></button>
         <h2 id="shelf-account-title">Account settings</h2>

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import type { Book, LibraryResponse, SessionResponse } from "@/lib/types";
 import { UploadError, uploadPdf } from "@/lib/client/upload";
+import { isDialogBackdropClick } from "@/lib/client/dialog";
 import AccountPanel from "@/components/AccountPanel";
 
 type UploadStatus = "queued" | "uploading" | "checking" | "done" | "error";
@@ -92,7 +93,7 @@ function BookDialog({ action, onClose, onSaved, onUnauthorized }: {
   return (
     <dialog ref={dialogRef} className="shelf-dialog" aria-labelledby="shelf-dialog-title" aria-describedby="shelf-dialog-description"
       onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}
-      onClick={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+      onClick={event => { if (!busy && isDialogBackdropClick(event)) onClose(); }}>
       <form onSubmit={submit}>
         <button className="shelf-icon-button shelf-dialog-close" type="button" aria-label="Close dialog" onClick={onClose} disabled={busy}><X size={21} /></button>
         <h2 id="shelf-dialog-title">{deleting ? "Delete book?" : "Rename book"}</h2>
