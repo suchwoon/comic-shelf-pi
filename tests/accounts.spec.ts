@@ -10,7 +10,7 @@ async function adminLogin(request: APIRequestContext) {
   expect(response.status()).toBe(200);
 }
 
-test("an invited reader has personal progress and cannot manage books or accounts", async ({ page, browser }, testInfo) => {
+test("an invited reader can read with personal progress but cannot download originals or manage the library", async ({ page, browser }, testInfo) => {
   await adminLogin(page.request);
   const pdf = await PDFDocument.create();
   pdf.setTitle(`Account permissions ${Date.now()} ${testInfo.project.name}`);
@@ -42,7 +42,18 @@ test("an invited reader has personal progress and cannot manage books or account
     const token = new URLSearchParams(new URL(url).hash.slice(1)).get("token");
     const reader = await memberContext.newPage();
     const errors: string[] = [];
+    const originalRequests: string[] = [];
+    const pdfResponses: string[] = [];
+    const pageImages: string[] = [];
     reader.on("pageerror", error => errors.push(error.message));
+    reader.on("request", request => {
+      if (new URL(request.url()).pathname.endsWith("/file")) originalRequests.push(request.url());
+    });
+    reader.on("response", response => {
+      if (response.headers()["content-type"]?.includes("application/pdf")) pdfResponses.push(response.url());
+      if (new URL(response.url()).pathname.startsWith(`${endpoint}/pages/`) && response.ok()
+        && response.headers()["content-type"]?.startsWith("image/jpeg")) pageImages.push(new URL(response.url()).pathname);
+    });
     await reader.goto(url);
     await reader.getByLabel("Username", { exact: true }).fill(`reader_${Date.now()}`);
     await reader.getByLabel("Password", { exact: true }).fill(readerPassword);
@@ -55,6 +66,8 @@ test("an invited reader has personal progress and cannot manage books or account
     await expect(reader.getByRole("button", { name: "Upload PDF", exact: true })).toHaveCount(0);
     await expect(reader.getByLabel("Choose PDF files")).toHaveCount(0);
     await expect(reader.getByLabel("Manage Members test", { exact: true })).toHaveCount(0);
+    await expect(reader.getByRole("link", { name: "Download Members test", exact: true })).toHaveCount(0);
+    await expect(reader.locator(`a[href*="${endpoint}/file"]`)).toHaveCount(0);
     const session = await (await memberContext.request.get("/api/session")).json();
     expect(session.user.role).toBe("reader");
     readerId = session.user.id;
@@ -82,20 +95,52 @@ test("an invited reader has personal progress and cannot manage books or account
     const before = await (await memberContext.request.get(endpoint)).json();
     expect(before.book.currentPage).toBe(1);
     expect(before.book.lastReadAt).toBeNull();
-    expect((await memberContext.request.get(`${endpoint}/file`, { headers: { Range: "bytes=0-4" } })).status()).toBe(206);
+    for (const attempt of [
+      { method: "GET" },
+      { method: "HEAD" },
+      { method: "GET", headers: { Range: "bytes=0-4" } },
+      { method: "HEAD", headers: { Range: "bytes=0-4" } },
+      { method: "GET", headers: { Range: "bytes=999999999-" } },
+    ]) {
+      const denied = await memberContext.request.fetch(`${endpoint}/file`, attempt);
+      expect(denied.status()).toBe(403);
+      expect(denied.headers()["content-type"]).not.toContain("application/pdf");
+      expect(denied.headers()["content-range"]).toBeUndefined();
+      expect((await denied.body()).includes(Buffer.from("%PDF-"))).toBe(false);
+    }
+    for (const query of ["?download=1", "?raw=true", "?role=admin", "?inline=1"]) {
+      expect((await memberContext.request.get(`${endpoint}/file${query}`)).status()).toBe(403);
+    }
+    const image = await memberContext.request.get(`${endpoint}/pages/1`);
+    expect(image.status()).toBe(200);
+    expect(image.headers()["content-type"]).toMatch(/^image\/jpeg/);
+    expect(image.headers()["cache-control"]).toContain("no-store");
+    expect((await image.body()).subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
     await reader.getByRole("link", { name: "Read Members test", exact: true }).click();
     await expect(reader.getByTestId("pdf-page")).toHaveAttribute("data-page", "1");
     await revealReaderControls(reader);
     await reader.getByRole("button", { name: "Next page", exact: true }).click();
+    await expect(reader.getByTestId("pdf-page")).toHaveAttribute("data-page", "2");
+    await expect.poll(async () => (await (await memberContext.request.get(endpoint)).json()).book.currentPage).toBe(2);
+    await reader.reload();
+    await expect(reader.getByTestId("pdf-page")).toHaveAttribute("data-page", "2");
+    await revealReaderControls(reader);
     await reader.getByRole("link", { name: "Back to library", exact: true }).click();
     await expect(reader).toHaveURL("http://127.0.0.1:3210/");
     expect((await (await memberContext.request.get(endpoint)).json()).book.currentPage).toBe(2);
     expect((await (await page.request.get(endpoint)).json()).book.currentPage).toBe(3);
+    expect(pageImages).toContain(`${endpoint}/pages/1`);
+    expect(pageImages).toContain(`${endpoint}/pages/2`);
+    expect(originalRequests).toEqual([]);
+    expect(pdfResponses).toEqual([]);
     expect(errors).toEqual([]);
 
     expect((await page.request.patch(`/api/admin/users/${readerId}`, { data: { disabled: true } })).status()).toBe(200);
     expect((await memberContext.request.get(endpoint)).status()).toBe(401);
     expect((await memberContext.request.get(`${endpoint}/file`)).status()).toBe(401);
+    expect((await memberContext.request.head(`${endpoint}/file`)).status()).toBe(401);
+    expect((await memberContext.request.get(`${endpoint}/pages/1`)).status()).toBe(401);
+    expect((await memberContext.request.head(`${endpoint}/pages/1`)).status()).toBe(401);
     expect((await page.request.get(endpoint)).status()).toBe(200);
   } finally {
     await memberContext.close();

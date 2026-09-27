@@ -1,4 +1,4 @@
-import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
+import type { DocumentPage, PageDocument, PageRenderTask } from "./page-document";
 
 export interface PageLayout {
   width: number;
@@ -35,7 +35,8 @@ interface Foreground extends PageSpec {
 
 interface RenderJob extends PageSpec {
   cancelled: boolean;
-  task?: RenderTask;
+  controller: AbortController;
+  task?: PageRenderTask;
   entry?: CacheEntry;
 }
 
@@ -75,12 +76,12 @@ export class PdfPageCache {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
 
-  constructor(private readonly pdf: PDFDocumentProxy) {}
+  constructor(private readonly pdf: PageDocument) {}
 
   request(page: number, layout: PageLayout): Promise<HTMLCanvasElement> {
     if (this.disposed) return Promise.reject(aborted());
     if (!Number.isInteger(page) || page < 1 || page > this.pdf.numPages) {
-      return Promise.reject(new RangeError("Invalid PDF page"));
+      return Promise.reject(new RangeError("Invalid page number"));
     }
     let spec: PageSpec;
     try {
@@ -157,7 +158,7 @@ export class PdfPageCache {
     this.visible = null;
     this.cancelRunning();
     for (const entry of this.entries.values()) {
-      // A cancelled PDF.js task can still touch its canvas until its promise settles.
+      // A cancelled render can still touch its canvas until its promise settles.
       if (entry !== this.running?.entry) this.release(entry);
     }
   }
@@ -176,6 +177,7 @@ export class PdfPageCache {
   private cancelRunning(): void {
     if (!this.running || this.running.cancelled) return;
     this.running.cancelled = true;
+    this.running.controller.abort();
     try { this.running.task?.cancel(); } catch { /* Already settled or document destroyed. */ }
   }
 
@@ -253,15 +255,16 @@ export class PdfPageCache {
     if (!spec) return;
     const job: RenderJob = {
       page: spec.page, layout: spec.layout, layoutKey: spec.layoutKey, key: spec.key, cancelled: false,
+      controller: new AbortController(),
     };
     this.running = job;
     void this.render(job);
   }
 
   private async render(job: RenderJob): Promise<void> {
-    let page: PDFPageProxy | undefined;
+    let page: DocumentPage | undefined;
     try {
-      page = await this.pdf.getPage(job.page);
+      page = await this.pdf.getPage(job.page, job.controller.signal);
       if (job.cancelled || this.disposed) return;
       const natural = page.getViewport({ scale: 1 });
       const { layout } = job;
@@ -271,7 +274,7 @@ export class PdfPageCache {
       const cssViewport = page.getViewport({ scale: cssScale });
       if (!Number.isFinite(cssViewport.width) || cssViewport.width <= 0
         || !Number.isFinite(cssViewport.height) || cssViewport.height <= 0) {
-        throw new Error("Invalid PDF page dimensions");
+        throw new Error("Invalid page dimensions");
       }
       const pixelRatio = Math.min(layout.pixelRatio,
         Math.sqrt(MAX_CANVAS_PIXELS / (cssViewport.width * cssViewport.height)),
@@ -319,7 +322,7 @@ export class PdfPageCache {
       }
       // Background failures leave no failed cache entry, so a later request can retry.
     } finally {
-      try { page?.cleanup(); } catch { /* PDF document may already have been destroyed. */ }
+      try { page?.cleanup(); } catch { /* The document may already have been destroyed. */ }
       if (job.entry && (job.cancelled || this.disposed || !job.entry.ready)) this.release(job.entry);
       if (this.running === job) this.running = null;
       this.prune();

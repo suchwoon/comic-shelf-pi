@@ -207,7 +207,7 @@ export default function AccountPanel({ user, onClose, onUnauthorized, onSession 
         </form> : <div className="shelf-member-management">
           <section className="shelf-account-section" aria-labelledby="shelf-invite-heading">
             <div className="shelf-account-section-heading"><h3 id="shelf-invite-heading">Invite a reader</h3><button className="shelf-button shelf-button-primary" type="button" onClick={() => void createInvitation()} disabled={!!busy || loading}><Plus size={15} />Create invitation</button></div>
-            <p className="shelf-field-hint">Readers can read and download books. Their reading progress is private to their account.</p>
+            <p className="shelf-field-hint">Readers can read books on the site. Only the administrator can download original PDFs. Reading progress is private to each account.</p>
             {created && <div className="shelf-invitation-created">
               <strong>{created.kind === "reset" ? `Reset password for ${created.username}` : "Your invitation is ready"}</strong>
               <p>This link can be used once within 7 days, until {dateLabel(created.expiresAt)}. Copy it now; it is only shown here after creation.</p>

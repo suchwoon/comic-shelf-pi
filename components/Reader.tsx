@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { ArrowLeft, ArrowLeftRight, BookOpen, Check, ChevronLeft, ChevronRight, Eye, EyeOff, LoaderCircle, Maximize, Minimize, RotateCcw } from "lucide-react";
-import type { PDFDocumentProxy, PDFDocumentLoadingTask } from "pdfjs-dist";
+import { ImagePageDocument, type PageDocument } from "@/lib/reader/page-document";
 import type { Book, ReadingDirection } from "@/lib/types";
 import { PdfPageCache } from "@/lib/reader/page-cache";
 import { ProgressSaveQueue, type ProgressSnapshot, type SaveStatus } from "@/lib/reader/progress";
@@ -73,9 +73,8 @@ function useProgress(bookId: string) {
 export default function Reader({ bookId }: { bookId: string }) {
   const router = useRouter();
   const [book, setBook] = useState<Book | null>(null);
-  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+  const [pageDocument, setPageDocument] = useState<PageDocument | null>(null);
   const [loadError, setLoadError] = useState("");
-  const [loadPercent, setLoadPercent] = useState<number | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [page, setPage] = useState(1);
   const [pageInput, setPageInput] = useState("1");
@@ -103,7 +102,7 @@ export default function Reader({ bookId }: { bookId: string }) {
   const tapStart = useRef<PageTap | null>(null);
   const tapClick = useRef<{ target: HTMLButtonElement; time: number } | null>(null);
   const { latest, change, flush, status: saveStatus } = useProgress(bookId);
-  const pageCache = useMemo(() => pdf ? new PdfPageCache(pdf) : null, [pdf]);
+  const pageCache = useMemo(() => pageDocument ? new PdfPageCache(pageDocument) : null, [pageDocument]);
 
   const backToLibrary = async () => {
     if (leavingRef.current) return;
@@ -146,11 +145,12 @@ export default function Reader({ bookId }: { bookId: string }) {
 
   useEffect(() => {
     let active = true;
-    let task: PDFDocumentLoadingTask | undefined;
+    let document: PageDocument | undefined;
     const controller = new AbortController();
     setLoadError("");
-    setLoadPercent(null);
-    setPdf(null);
+    setPageDocument(null);
+    setBook(null);
+    initialReadMarked.current = false;
     setRenderedPage(null);
     async function load() {
       try {
@@ -161,48 +161,28 @@ export default function Reader({ bookId }: { bookId: string }) {
         if (!active) return;
         const value = data.book as Book;
         setBook({ ...value, fit: "page" });
-        setPage(value.currentPage);
-        setPageInput(String(value.currentPage));
         setDirection(value.direction);
         // Older books may have saved width-fit settings. The reader now always
         // fits a full page, and the first successful read persists that setting.
-        latest.current = { currentPage: value.currentPage, direction: value.direction, fit: "page" };
-        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-        if (!active) return;
-        pdfjs.GlobalWorkerOptions.workerSrc = `/pdfjs/pdf.worker.min.mjs?v=${pdfjs.version}`;
-        task = pdfjs.getDocument({
-          url: `/api/books/${encodeURIComponent(bookId)}/file`,
-          cMapUrl: "/pdfjs/cmaps/",
-          cMapPacked: true,
-          standardFontDataUrl: "/pdfjs/standard_fonts/",
-          wasmUrl: "/pdfjs/wasm/",
-          // Fetch nearby data on demand instead of downloading the whole book.
-          disableAutoFetch: true,
-          disableStream: true,
-          rangeChunkSize: 256 * 1024,
-        });
-        task.onProgress = ({ loaded, total }: { loaded: number; total: number }) => {
-          if (active && total > 0) setLoadPercent(Math.min(100, Math.round(loaded / total * 100)));
-        };
-        const document = await task.promise;
-        if (!active) return;
-        const initialPage = Math.max(1, Math.min(value.currentPage, document.numPages));
+        // Page images are rendered on the server. The browser never receives
+        // original PDF bytes, including when an administrator reads a book.
+        document = new ImagePageDocument(bookId, value.pageCount);
+        const initialPage = Math.max(1, Math.min(value.currentPage, value.pageCount));
         setPage(initialPage);
         setPageInput(String(initialPage));
         latest.current = { currentPage: initialPage, direction: value.direction, fit: "page" };
-        setPdf(document);
+        setPageDocument(document);
       } catch (error) {
         if (!active || controller.signal.aborted) return;
-        const name = error instanceof Error ? error.name : "";
         const message = error instanceof Error ? error.message : "";
-        setLoadError(name === "PasswordException" ? "Password-protected PDFs are not supported." : name === "InvalidPDFException" ? "This PDF may be damaged or incomplete." : message === "book_not_found" ? "This book is no longer in your library." : "Check your connection and try again.");
+        setLoadError(message === "book_not_found" ? "This book is no longer in your library." : "Check your connection and try again.");
       }
     }
     void load();
     return () => {
       active = false;
       controller.abort();
-      if (task) void task.destroy().catch(() => {});
+      document?.destroy();
     };
   }, [bookId, loadAttempt, latest]);
 
@@ -280,12 +260,12 @@ export default function Reader({ bookId }: { bookId: string }) {
   }, []);
 
   const goToPage = useCallback((nextPage: number) => {
-    if (leavingRef.current || !pdf || !Number.isFinite(nextPage)) return;
-    const next = Math.max(1, Math.min(pdf.numPages, Math.trunc(nextPage)));
+    if (leavingRef.current || !pageDocument || !Number.isFinite(nextPage)) return;
+    const next = Math.max(1, Math.min(pageDocument.numPages, Math.trunc(nextPage)));
     setPage(next);
     setPageInput(String(next));
     if (latest.current?.currentPage !== next) change({ currentPage: next });
-  }, [pdf, latest, change]);
+  }, [pageDocument, latest, change]);
 
   const toggleDirection = () => {
     const value = direction === "ltr" ? "rtl" : "ltr";
@@ -305,13 +285,13 @@ export default function Reader({ bookId }: { bookId: string }) {
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (!pdf || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (!pageDocument || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select, [contenteditable=true]")) return;
       const current = latest.current?.currentPage ?? 1;
       if (event.key === "ArrowRight") goToPage(current + (direction === "ltr" ? 1 : -1));
       else if (event.key === "ArrowLeft") goToPage(current + (direction === "ltr" ? -1 : 1));
       else if (event.key === "Home") goToPage(1);
-      else if (event.key === "End") goToPage(pdf.numPages);
+      else if (event.key === "End") goToPage(pageDocument.numPages);
       else if (event.key.toLowerCase() === "h") setControls(value => !value);
       else if (event.key.toLowerCase() === "f" && fullscreenAvailable) void toggleFullscreen();
       else return;
@@ -319,9 +299,9 @@ export default function Reader({ bookId }: { bookId: string }) {
     };
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [pdf, latest, direction, goToPage, fullscreenAvailable, toggleFullscreen]);
+  }, [pageDocument, latest, direction, goToPage, fullscreenAvailable, toggleFullscreen]);
 
-  const pageCount = pdf?.numPages ?? book?.pageCount ?? 0;
+  const pageCount = pageDocument?.numPages ?? book?.pageCount ?? 0;
   const leftIsNext = direction === "rtl";
   const submitPage = () => {
     if (/^\d+$/.test(pageInput)) goToPage(Number(pageInput));
@@ -385,7 +365,7 @@ export default function Reader({ bookId }: { bookId: string }) {
         </Link>
         <h1 className="reader-book-title" title={book?.title}>{book?.title || "Opening book"}</h1>
         <div className="reader-heading-actions">
-          <button type="button" className="reader-direction reader-button" onClick={toggleDirection} disabled={!pdf || leaving} title="Change reading direction" aria-label={`Reading direction: ${direction === "ltr" ? "Left to right" : "Right to left"}`}>
+          <button type="button" className="reader-direction reader-button" onClick={toggleDirection} disabled={!pageDocument || leaving} title="Change reading direction" aria-label={`Reading direction: ${direction === "ltr" ? "Left to right" : "Right to left"}`}>
             <ArrowLeftRight size={17} /><span>{direction === "ltr" ? "Left to right" : "Right to left"}</span>
           </button>
           <button type="button" className="reader-icon-button" onClick={() => {
@@ -403,12 +383,12 @@ export default function Reader({ bookId }: { bookId: string }) {
         </div>
         {touchNavigation && <div className="reader-tap-zones" role="group" aria-label="Touch navigation">
           <button type="button" className="reader-tap-zone" onClick={event => activateTap(event, "left")}
-            disabled={!pdf || !pageReady || (leftIsNext ? page >= pageCount : page <= 1)}
+            disabled={!pageDocument || !pageReady || (leftIsNext ? page >= pageCount : page <= 1)}
             aria-label={`${leftIsNext ? "Next" : "Previous"} page (left area)`} />
           <button type="button" className="reader-tap-zone" ref={centerTapRef} onClick={event => activateTap(event, "center")}
             aria-label={`${controls ? "Hide" : "Show"} controls (center area)`} aria-expanded={controls} />
           <button type="button" className="reader-tap-zone" onClick={event => activateTap(event, "right")}
-            disabled={!pdf || !pageReady || (leftIsNext ? page <= 1 : page >= pageCount)}
+            disabled={!pageDocument || !pageReady || (leftIsNext ? page <= 1 : page >= pageCount)}
             aria-label={`${leftIsNext ? "Previous" : "Next"} page (right area)`} />
         </div>}
         {touchNavigation && pageReady && showTouchHint && !controls && <p className="reader-touch-hint" role="status">
@@ -422,11 +402,10 @@ export default function Reader({ bookId }: { bookId: string }) {
             <button type="button" className="reader-primary" onClick={() => loadError ? setLoadAttempt(value => value + 1) : setRenderAttempt(value => value + 1)}><RotateCcw size={15} />Try again</button>
             {loadError && <Link href="/" className="reader-message-back">Back to library</Link>}
           </div>
-        ) : (!pdf || (rendering && (renderedPage === null || showPageLoading))) && (
+        ) : (!pageDocument || (rendering && (renderedPage === null || showPageLoading))) && (
           <div className={`reader-loading${renderedPage ? " reader-loading-small" : ""}`} role="status">
             <LoaderCircle className="reader-spin" size={22} />
-            <span>{!pdf ? "Opening book" : "Loading page"}</span>
-            {!pdf && loadPercent !== null && <small>{loadPercent}%</small>}
+            <span>{!pageDocument ? "Opening book" : "Loading page"}</span>
           </div>
         )}
       </main>
@@ -442,16 +421,16 @@ export default function Reader({ bookId }: { bookId: string }) {
           ) : <span className="reader-save-idle">Auto-save on</span>}
         </div>
         <div className="reader-pagination" aria-label="Page navigation">
-          <button type="button" className="reader-page-button" disabled={!pdf || (leftIsNext ? page >= pageCount : page <= 1)} onClick={() => goToPage((latest.current?.currentPage ?? page) + (leftIsNext ? 1 : -1))} aria-label={leftIsNext ? "Next page" : "Previous page"} title={leftIsNext ? "Next page (←)" : "Previous page (←)"}>
+          <button type="button" className="reader-page-button" disabled={!pageDocument || (leftIsNext ? page >= pageCount : page <= 1)} onClick={() => goToPage((latest.current?.currentPage ?? page) + (leftIsNext ? 1 : -1))} aria-label={leftIsNext ? "Next page" : "Previous page"} title={leftIsNext ? "Next page (←)" : "Previous page (←)"}>
             <ChevronLeft size={19} /><span>{leftIsNext ? "Next" : "Previous"}</span>
           </button>
           <form className="reader-page-form" onSubmit={event => { event.preventDefault(); submitPage(); }}>
             <label className="sr-only" htmlFor="reader-page-input">Page number</label>
-            <input id="reader-page-input" type="text" inputMode="numeric" pattern="[0-9]*" value={pageInput} onChange={event => setPageInput(event.target.value)} onBlur={submitPage} onFocus={event => event.target.select()} disabled={!pdf} autoComplete="off" maxLength={6} aria-describedby="reader-total-pages" />
+            <input id="reader-page-input" type="text" inputMode="numeric" pattern="[0-9]*" value={pageInput} onChange={event => setPageInput(event.target.value)} onBlur={submitPage} onFocus={event => event.target.select()} disabled={!pageDocument} autoComplete="off" maxLength={6} aria-describedby="reader-total-pages" />
             <span id="reader-total-pages">/ {pageCount || "—"}</span>
-            <button type="submit" className="sr-only" disabled={!pdf}>Go to page</button>
+            <button type="submit" className="sr-only" disabled={!pageDocument}>Go to page</button>
           </form>
-          <button type="button" className="reader-page-button" disabled={!pdf || (leftIsNext ? page <= 1 : page >= pageCount)} onClick={() => goToPage((latest.current?.currentPage ?? page) + (leftIsNext ? -1 : 1))} aria-label={leftIsNext ? "Previous page" : "Next page"} title={leftIsNext ? "Previous page (→)" : "Next page (→)"}>
+          <button type="button" className="reader-page-button" disabled={!pageDocument || (leftIsNext ? page <= 1 : page >= pageCount)} onClick={() => goToPage((latest.current?.currentPage ?? page) + (leftIsNext ? -1 : 1))} aria-label={leftIsNext ? "Previous page" : "Next page"} title={leftIsNext ? "Previous page (→)" : "Next page (→)"}>
             <span>{leftIsNext ? "Previous" : "Next"}</span><ChevronRight size={19} />
           </button>
         </div>
@@ -461,7 +440,7 @@ export default function Reader({ bookId }: { bookId: string }) {
       </footer>
       {fullscreenError && <div className="reader-toast" role="status"><span>{fullscreenError}</span><button type="button" onClick={() => setFullscreenError("")}>Dismiss</button></div>}
       {navigationError && <div className="reader-toast" role="alert"><span>{navigationError}</span><button type="button" onClick={() => void backToLibrary()}>Try again</button></div>}
-      <span className="sr-only" aria-live="polite" aria-atomic="true">{pdf && !rendering ? `Page ${page} of ${pageCount}` : ""}</span>
+      <span className="sr-only" aria-live="polite" aria-atomic="true">{pageDocument && !rendering ? `Page ${page} of ${pageCount}` : ""}</span>
     </div>
   );
 }

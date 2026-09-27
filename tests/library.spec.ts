@@ -25,7 +25,7 @@ async function expectPageFits(page: Page) {
   }), { message: "The complete PDF page should fit the reader without scroll overflow" }).toBe(true);
 }
 
-test("streams scanned PDFs, normalizes legacy width fit, and restores reading progress", async ({ page }, testInfo) => {
+test("reads scanned page images, normalizes legacy width fit, and restores reading progress", async ({ page }, testInfo) => {
   const browserErrors: string[] = [];
   page.on("pageerror", error => browserErrors.push(error.message));
   await page.request.post("/api/session", { data: { username: "admin", password: "test-only-comic-shelf-passphrase" } });
@@ -35,9 +35,14 @@ test("streams scanned PDFs, normalizes legacy width fit, and restores reading pr
   expect(book.size).toBeGreaterThan(512 * 1024);
   const endpoint = `/api/books/${book.id}`;
   expect((await page.request.patch(`${endpoint}/progress`, { data: { fit: "width" } })).ok()).toBe(true);
-  const ranges: string[] = [];
+  const originalRequests: string[] = [];
+  const pageImages: string[] = [];
   page.on("request", request => {
-    if (request.url().endsWith(`/api/books/${book.id}/file`) && request.headers().range) ranges.push(request.headers().range);
+    if (new URL(request.url()).pathname === `${endpoint}/file`) originalRequests.push(request.url());
+  });
+  page.on("response", response => {
+    if (new URL(response.url()).pathname.startsWith(`${endpoint}/pages/`) && response.ok()
+      && response.headers()["content-type"]?.startsWith("image/jpeg")) pageImages.push(new URL(response.url()).pathname);
   });
   await page.goto(`/read/${book.id}`);
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
@@ -66,7 +71,10 @@ test("streams scanned PDFs, normalizes legacy width fit, and restores reading pr
   await revealReaderControls(page);
   await expect(page.getByRole("button", { name: "Reading direction: Right to left", exact: true })).toBeVisible();
   await expectPageFits(page);
-  expect(ranges.length).toBeGreaterThan(0);
+  expect(pageImages).toContain(`${endpoint}/pages/1`);
+  expect(pageImages).toContain(`${endpoint}/pages/4`);
+  expect(pageImages).toContain(`${endpoint}/pages/7`);
+  expect(originalRequests).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath("scan-reader.png"), fullPage: true });
   expect(browserErrors).toEqual([]);
   expect((await page.request.delete(endpoint)).status()).toBe(204);
@@ -100,10 +108,25 @@ test("signs in, uploads, resumes across devices, manages books, and signs out", 
   const id = readerPath!.split("/").at(-1);
   const endpoint = `/api/books/${id}`;
 
-  // Both originals and covers remain protected, including byte-range requests.
+  // Originals, rendered pages, and covers all require an active session.
+  expect((await anon.request.get(`${endpoint}/file`)).status()).toBe(401);
+  expect((await anon.request.head(`${endpoint}/file`)).status()).toBe(401);
   expect((await anon.request.get(`${endpoint}/file`, { headers: { Range: "bytes=0-4" } })).status()).toBe(401);
+  expect((await anon.request.get(`${endpoint}/pages/1`)).status()).toBe(401);
+  expect((await anon.request.head(`${endpoint}/pages/1`)).status()).toBe(401);
   expect((await anon.request.get(`${endpoint}/cover`)).status()).toBe(401);
   await anon.close();
+  await expect(page.getByRole("link", { name: "Download My Comic 01", exact: true })).toBeVisible();
+  const downloadStarted = page.waitForEvent("download");
+  await page.getByRole("link", { name: "Download My Comic 01", exact: true }).click();
+  const download = await downloadStarted;
+  expect(download.suggestedFilename()).toBe("My Comic 01.pdf");
+  const downloadPath = await download.path();
+  expect(readFileSync(downloadPath!)).toEqual(readFileSync(fixture));
+  const head = await page.request.head(`${endpoint}/file`);
+  expect(head.status()).toBe(200);
+  expect(head.headers()["content-type"]).toContain("application/pdf");
+  expect(head.headers()["cache-control"]).toContain("no-store");
   const part = await page.request.get(`${endpoint}/file`, { headers: { Range: "bytes=0-4" } });
   expect(part.status()).toBe(206);
   expect(await part.text()).toBe("%PDF-");
@@ -154,6 +177,7 @@ test("signs in, uploads, resumes across devices, manages books, and signs out", 
   await expect(page.getByRole("heading", { name: "Your library is empty", exact: true })).toBeVisible();
   expect((await page.request.get(`${endpoint}/file`)).status()).toBe(404);
   expect((await page.request.get(`${endpoint}/cover`)).status()).toBe(404);
+  expect((await page.request.get(`${endpoint}/pages/1`)).status()).toBe(404);
   expect(browserErrors).toEqual([]);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByLabel("Library password")).toBeVisible();

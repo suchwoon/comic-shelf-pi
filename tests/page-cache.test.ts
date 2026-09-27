@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, it, type TestContext } from "node:test";
-import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { PageDocument } from "../lib/reader/page-document";
 import { PdfPageCache, type PageLayout } from "../lib/reader/page-cache";
 
 const layout: PageLayout = { width: 800, height: 900, fit: "page", zoom: 1, pixelRatio: 1 };
@@ -70,6 +70,7 @@ function fixture(t: TestContext, options: {
   const canvases: FakeCanvas[] = [];
   const renders: Render[] = [];
   const pageRequests: number[] = [];
+  const pageSignals: AbortSignal[] = [];
   const pageGates = new Map<number, ReturnType<typeof deferred<void>>>();
   let peakPixels = 0;
   let peakCanvases = 0;
@@ -99,9 +100,10 @@ function fixture(t: TestContext, options: {
   const pages = options.pages ?? 12;
   const pdf = {
     numPages: pages,
-    async getPage(page: number) {
+    async getPage(page: number, signal: AbortSignal) {
       assert.ok(page >= 1 && page <= pages, `requested out-of-bounds PDF page ${page}`);
       pageRequests.push(page);
+      pageSignals.push(signal);
       await pageGates.get(page)?.promise;
       return {
         getViewport({ scale }: { scale: number }) {
@@ -133,7 +135,7 @@ function fixture(t: TestContext, options: {
         cleanup() {},
       };
     },
-  } as unknown as PDFDocumentProxy;
+  } as unknown as PageDocument;
   const cache = new PdfPageCache(pdf);
   t.after(async () => {
     cache.dispose();
@@ -160,7 +162,7 @@ function fixture(t: TestContext, options: {
     return canvas as unknown as FakeCanvas;
   }
   return {
-    cache, canvases, renders, pageRequests, renderFor, show,
+    cache, canvases, renders, pageRequests, pageSignals, renderFor, show,
     blockPage(page: number) {
       const gate = deferred<void>();
       pageGates.set(page, gate);
@@ -204,6 +206,7 @@ describe("PDF page preparation and canvas lifecycle", { timeout: 20_000 }, () =>
     const requested = f.cache.request(2, layout);
     await nextTurn();
     assert.equal(pending.cancelled, false);
+    assert.equal(f.pageSignals[1].aborted, false);
     assert.equal(f.renders.filter((render) => render.page === 2).length, 1);
     pending.complete();
     assert.equal(await requested, pending.canvas);
@@ -309,6 +312,7 @@ describe("PDF page preparation and canvas lifecycle", { timeout: 20_000 }, () =>
     const superseded = assert.rejects(oldRequest, abortError);
     await until(() => f.pageRequests.includes(1), "initial PDF lookup did not begin");
     const newRequest = f.cache.request(5, layout);
+    assert.equal(f.pageSignals[0].aborted, true, "supersession must also cancel a pending image fetch");
     releaseLookup();
     const latest = await f.renderFor(5);
     latest.complete();
@@ -322,6 +326,7 @@ describe("PDF page preparation and canvas lifecycle", { timeout: 20_000 }, () =>
     await until(() => f.pageRequests.includes(9), "pending PDF lookup did not begin");
     const allocationCount = f.canvases.length;
     f.cache.dispose();
+    assert.equal(f.pageSignals.at(-1)!.aborted, true, "disposal must cancel a pending image fetch");
     releaseAfterDispose();
     await disposed;
     await nextTurn();

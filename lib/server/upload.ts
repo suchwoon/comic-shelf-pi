@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import type { Book } from "../types";
 import { ApiError } from "./http";
 import { bookFile, coverFile, getBook, maxUploadBytes, store } from "./storage";
+import { deletePageImages } from "./page-images";
 
 const inspectionState = globalThis as typeof globalThis & { __comicInspecting?: boolean };
 
@@ -140,5 +141,5 @@ export async function deleteBook(id: string) {
     await Promise.all(moved.map(file => rename(file.to, file.from)));
     throw error;
   }
-  await Promise.all(moved.map(file => rm(file.to, { force: true })));
+  await Promise.all([deletePageImages(id), ...moved.map(file => rm(file.to, { force: true }))]);
 }

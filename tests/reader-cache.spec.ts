@@ -53,7 +53,7 @@ async function uploadBook(page: Page) {
 }
 
 async function prefetchedCanvas(page: Page, pageNumber: number): Promise<JSHandle<HTMLCanvasElement>> {
-  // data-page is assigned only when PDF.js has finished rendering. A completed,
+  // data-page is assigned only when the page image has finished drawing. A completed,
   // detached canvas therefore proves that the page was prepared before navigation.
   await expect.poll(() => page.evaluate(number => (window as unknown as ObservedWindow).__readerTestCanvases.some(canvas =>
     canvas.dataset.page === String(number) && canvas.width > 0 && !canvas.isConnected,
@@ -107,6 +107,11 @@ test("immediately displays prepared next and previous pages using the same canva
   page.on("pageerror", error => browserErrors.push(error.message));
   await observeCreatedCanvases(page);
   const book = await uploadBook(page);
+  const pageRequests: string[] = [];
+  page.on("request", request => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith(`${book.endpoint}/pages/`)) pageRequests.push(path);
+  });
   try {
     await page.goto(book.path);
     await expect(page.locator("html")).toHaveAttribute("lang", "en");
@@ -115,6 +120,8 @@ test("immediately displays prepared next and previous pages using the same canva
     await revealReaderControls(page);
     const firstCanvas = await visibleCanvas.elementHandle();
     const secondCanvas = await prefetchedCanvas(page, 2);
+    const preparedPageRequests = [1, 2].map(number => pageRequests.filter(path => path === `${book.endpoint}/pages/${number}`).length);
+    expect(preparedPageRequests.every(count => count > 0)).toBe(true);
     await observeLoadingChanges(page);
 
     await page.getByRole("button", { name: "Next page", exact: true }).click();
@@ -130,6 +137,7 @@ test("immediately displays prepared next and previous pages using the same canva
     expect(await secondCanvas.evaluate(canvas => canvas === document.querySelector('[data-testid="pdf-page"]'))).toBe(true);
     await expect(visibleCanvas).toHaveCount(1);
     await expectPageFits(page);
+    expect([1, 2].map(number => pageRequests.filter(path => path === `${book.endpoint}/pages/${number}`).length)).toEqual(preparedPageRequests);
     expect(await page.evaluate(() => (window as unknown as ObservedWindow).__readerTestVisualChanges)).toEqual([]);
     expect(browserErrors).toEqual([]);
     await firstCanvas!.dispose();

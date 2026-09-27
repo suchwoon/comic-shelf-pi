@@ -404,7 +404,7 @@ export default function Bookshelf() {
                 <Link className="shelf-book-link" href={`/read/${book.id}`} onClick={openReader} aria-label={`Read ${book.title}`}><BookCover book={book} /><h3 title={book.title}>{book.title}</h3></Link>
                 <div className="shelf-book-meta">
                   <span>{book.pageCount.toLocaleString("en-US")} {book.pageCount === 1 ? "page" : "pages"}{book.lastReadAt && <> · {percentage}% read</>}</span>
-                  <div className="shelf-book-tools"><a className="shelf-icon-button" href={`/api/books/${book.id}/file`} download={book.originalName} aria-label={`Download ${book.title}`} title="Download PDF"><ArrowDownToLine size={15} /></a>
+                  <div className="shelf-book-tools">{isAdmin && <a className="shelf-icon-button" href={`/api/books/${book.id}/file`} download={book.originalName} aria-label={`Download ${book.title}`} title="Download PDF"><ArrowDownToLine size={15} /></a>}
                   {isAdmin && <details className="shelf-book-menu">
                     <summary className="shelf-icon-button" aria-label={`Manage ${book.title}`}><Ellipsis size={18} /></summary>
                     <div className="shelf-book-menu-options"><button type="button" onClick={event => openAction("rename", book, event.currentTarget)}><Pencil size={14} />Rename</button><button type="button" className="shelf-menu-danger" onClick={event => openAction("delete", book, event.currentTarget)}><Trash2 size={14} />Delete book</button></div>

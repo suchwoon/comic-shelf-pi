@@ -89,13 +89,16 @@ test("a failed save keeps the reader open and allows retrying the library naviga
   }
 });
 
-test("an expired session redirects to sign-in instead of trapping the reader in a failed save", async ({ page }) => {
+test("an expired session redirects from reading to sign-in and allows signing in again", async ({ page }) => {
   const book = await openBook(page);
   try {
+    const unauthorized = page.waitForResponse(response => {
+      const path = new URL(response.url()).pathname;
+      return response.status() === 401 && (path === `${book.endpoint}/progress` || path.startsWith(`${book.endpoint}/pages/`));
+    });
     await page.context().clearCookies();
-    const unauthorized = page.waitForResponse(response => response.url().endsWith(`${book.endpoint}/progress`) && response.status() === 401);
     await page.getByRole("button", { name: "Next page", exact: true }).click();
-    await page.getByRole("link", { name: "Back to library", exact: true }).click();
+    // Either the page image or the delayed progress save can discover expiry first.
     await unauthorized;
     await expect(page).toHaveURL("/");
     await expect(page.getByLabel("Library password")).toBeVisible();
