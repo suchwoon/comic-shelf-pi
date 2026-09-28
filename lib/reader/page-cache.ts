@@ -13,7 +13,8 @@ export interface PageSpread {
   canvases: HTMLCanvasElement[];
 }
 
-const MAX_CANVASES = 4;
+// Keep several ordinary-size spreads ready without increasing the bitmap memory cap.
+const MAX_CANVASES = 10;
 const MAX_TOTAL_PIXELS = 16_000_000;
 const MAX_CANVAS_PIXELS = 8_000_000;
 const MAX_CANVAS_DIMENSION = 8_192;
@@ -24,6 +25,7 @@ interface PageSpec {
   layoutKey: string;
   key: string;
   spread: boolean;
+  spreadOffset: 0 | 1;
 }
 
 interface CacheEntry {
@@ -62,11 +64,12 @@ function aborted(): Error {
   return error;
 }
 
-function specification(page: number, layout: PageLayout, spread = false): PageSpec {
+function specification(page: number, layout: PageLayout, spread = false, spreadOffset: 0 | 1 = 1): PageSpec {
   if (!Number.isFinite(layout.width) || layout.width <= 0
     || !Number.isFinite(layout.height) || layout.height <= 0
     || !Number.isFinite(layout.zoom) || layout.zoom <= 0
-    || (layout.fit !== "page" && layout.fit !== "width")) {
+    || (layout.fit !== "page" && layout.fit !== "width")
+    || (spreadOffset !== 0 && spreadOffset !== 1)) {
     throw new RangeError("Invalid page layout");
   }
   const normalized = {
@@ -76,8 +79,9 @@ function specification(page: number, layout: PageLayout, spread = false): PageSp
   };
   const layoutKey = JSON.stringify([
     normalized.width, normalized.height, normalized.fit, normalized.zoom, normalized.pixelRatio, spread,
+    spread ? spreadOffset : null,
   ]);
-  return { page, layout: normalized, layoutKey, key: `${page}:${layoutKey}`, spread };
+  return { page, layout: normalized, layoutKey, key: `${page}:${layoutKey}`, spread, spreadOffset };
 }
 
 /** Owns every page canvas, including the visible canvases until their replacements are committed. */
@@ -99,9 +103,9 @@ export class PdfPageCache {
     return this.requestGroup(page, layout, false).then(result => result.canvases[0]);
   }
 
-  /** Page 1 is a cover; subsequent portrait pages are paired as 2–3, 4–5, and so on. */
-  requestSpread(page: number, layout: PageLayout): Promise<PageSpread> {
-    return this.requestGroup(page, layout, true);
+  /** Offset 1 leaves the cover alone; offset 0 pairs pages 1–2, 3–4, and so on. */
+  requestSpread(page: number, layout: PageLayout, spreadOffset: 0 | 1 = 1): Promise<PageSpread> {
+    return this.requestGroup(page, layout, true, spreadOffset);
   }
 
   /** Call immediately after replacing the displayed DOM canvas, without an intervening await. */
@@ -122,14 +126,14 @@ export class PdfPageCache {
     this.prune();
   }
 
-  /** Warm the next two pages and the previous page, as the shared pixel budget allows. */
+  /** Warm the next four pages and the previous page, as the shared pixel budget allows. */
   prefetch(page: number, layout: PageLayout): void {
     this.prefetchGroup(page, layout, false);
   }
 
-  /** Warm the next spread and then the previous spread within the same shared canvas budget. */
-  prefetchSpread(page: number, layout: PageLayout): void {
-    this.prefetchGroup(page, layout, true);
+  /** Warm three upcoming spreads and the previous spread within the shared pixel budget. */
+  prefetchSpread(page: number, layout: PageLayout, spreadOffset: 0 | 1 = 1): void {
+    this.prefetchGroup(page, layout, true, spreadOffset);
   }
 
   dispose(): void {
@@ -148,14 +152,14 @@ export class PdfPageCache {
     }
   }
 
-  private requestGroup(page: number, layout: PageLayout, spread: boolean): Promise<PageSpread> {
+  private requestGroup(page: number, layout: PageLayout, spread: boolean, spreadOffset: 0 | 1 = 1): Promise<PageSpread> {
     if (this.disposed) return Promise.reject(aborted());
     if (!Number.isInteger(page) || page < 1 || page > this.pdf.numPages) {
       return Promise.reject(new RangeError("Invalid page number"));
     }
     let spec: PageSpec;
     try {
-      spec = specification(page, layout, spread);
+      spec = specification(page, layout, spread, spreadOffset);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -165,7 +169,7 @@ export class PdfPageCache {
     this.clearTimer();
     this.queue = [];
     this.layoutKey = spec.layoutKey;
-    this.preferredKeys = this.neighbors(spec).flatMap(item => this.keys(item));
+    this.preferredKeys = [...new Set(this.neighbors(spec).flatMap(item => this.keys(item)))];
 
     let resolve!: Foreground["resolve"];
     let reject!: Foreground["reject"];
@@ -175,24 +179,36 @@ export class PdfPageCache {
     });
     this.foreground = { ...spec, promise, resolve, reject, settled: false };
 
+    const pages = this.candidatePages(spec);
+    const cached = this.keys(spec).map(key => this.entries.get(key));
+    if (cached.every(entry => entry?.ready)) {
+      // Ready pages can be displayed immediately while a useful later page is still loading.
+      this.foreground.result = { pages, canvases: cached.map(entry => entry!.canvas) };
+      this.foreground.settled = true;
+      resolve(this.foreground.result);
+      if (this.running && !this.keys(this.running).some(key => this.preferredKeys.includes(key))) this.cancelRunning();
+      this.prune();
+      return promise;
+    }
+
     // A prefetched group already being rendered is promoted without cancelling its work.
-    if (this.running && (this.running.key !== spec.key || this.running.cancelled)) this.cancelRunning();
+    if (this.running && (!this.sameGroup(this.running, spec) || this.running.cancelled)) this.cancelRunning();
     this.prune();
     this.pump();
     return promise;
   }
 
-  private prefetchGroup(page: number, layout: PageLayout, spread: boolean): void {
+  private prefetchGroup(page: number, layout: PageLayout, spread: boolean, spreadOffset: 0 | 1 = 1): void {
     if (this.disposed || this.foreground) return;
     let spec: PageSpec;
     try {
-      spec = specification(page, layout, spread);
+      spec = specification(page, layout, spread, spreadOffset);
     } catch {
       return;
     }
     if (!this.visible.some(entry => entry.key === spec.key) || this.layoutKey !== spec.layoutKey) return;
     const neighbors = this.neighbors(spec, this.visible.map(entry => entry.page));
-    this.preferredKeys = neighbors.flatMap(item => this.keys(item));
+    this.preferredKeys = [...new Set(neighbors.flatMap(item => this.keys(item)))];
     this.prune();
     this.queue = neighbors.slice(1).filter(item => !this.keys(item).every(key => this.entries.get(key)?.ready)
       && (this.running?.key !== item.key || this.running.cancelled));
@@ -200,8 +216,8 @@ export class PdfPageCache {
   }
 
   private candidatePages(spec: PageSpec): number[] {
-    if (!spec.spread || spec.page === 1) return [spec.page];
-    const first = spec.page % 2 === 0 ? spec.page : spec.page - 1;
+    if (!spec.spread || (spec.page === 1 && spec.spreadOffset === 1)) return [spec.page];
+    const first = spec.page - ((spec.page - 1 - spec.spreadOffset) % 2);
     const pair = [first, first + 1].filter(page => page <= this.pdf.numPages);
     return pair.some(page => {
       const size = this.sizes.get(page);
@@ -213,10 +229,22 @@ export class PdfPageCache {
     return this.candidatePages(spec).map(page => `${page}:${spec.layoutKey}`);
   }
 
+  private sameGroup(first: PageSpec, second: PageSpec): boolean {
+    const keys = this.keys(first);
+    const other = this.keys(second);
+    return keys.length === other.length && keys.every((key, index) => key === other[index]);
+  }
+
+  private isForeground(job: RenderJob): boolean {
+    return !!this.foreground && this.sameGroup(job, this.foreground);
+  }
+
   private neighbors(spec: PageSpec, pages = this.candidatePages(spec)): PageSpec[] {
+    // Include each page number so a landscape scan that splits a pair cannot skip its partner.
     const numbers = spec.spread
-      ? [spec.page, Math.max(...pages) + 1, Math.min(...pages) - 1]
-      : [spec.page, spec.page + 1, spec.page + 2, spec.page - 1];
+      ? [spec.page, ...Array.from({ length: 6 }, (_, index) => Math.max(...pages) + index + 1),
+        Math.min(...pages) - 1, Math.min(...pages) - 2]
+      : [spec.page, spec.page + 1, spec.page + 2, spec.page + 3, spec.page + 4, spec.page - 1];
     return numbers.filter(page => page >= 1 && page <= this.pdf.numPages)
       .map(page => ({ ...spec, page, key: `${page}:${spec.layoutKey}` }));
   }
@@ -262,7 +290,7 @@ export class PdfPageCache {
     const entries = [...this.entries.values()];
     let count = entries.length;
     let allocated = entries.reduce((total, entry) => total + entry.pixels, 0);
-    const isForeground = this.foreground?.key === job.key;
+    const isForeground = this.isForeground(job);
     const candidates = entries.filter(entry => !this.protected(entry)
       && (isForeground || this.priority(entry.key) > this.priority(key)))
       .sort((first, second) => this.priority(second.key) - this.priority(first.key));
@@ -377,7 +405,9 @@ export class PdfPageCache {
         const height = Math.max(1, Math.min(MAX_CANVAS_DIMENSION, Math.floor(renderViewport.height)));
         // A newly created HTML canvas briefly has the browser's 300 × 150 bitmap.
         if (!this.makeRoom(Math.max(width * height, 300 * 150), job, key)) {
-          if (this.foreground?.key === job.key) throw new Error("Canvas budget exceeded");
+          if (this.isForeground(job)) throw new Error("Canvas budget exceeded");
+          // Later neighbors have lower priority; avoid decoding more images when the budget is full.
+          this.queue = [];
           return;
         }
 
@@ -410,13 +440,13 @@ export class PdfPageCache {
         try { page.cleanup(); } catch { /* The document may already have been destroyed. */ }
         documents.delete(number);
       }
-      if (this.foreground?.key === job.key) {
+      if (this.foreground && this.isForeground(job)) {
         this.foreground.settled = true;
         this.foreground.result = { pages, canvases };
         this.foreground.resolve(this.foreground.result);
       }
     } catch (error) {
-      if (active() && this.foreground?.key === job.key) {
+      if (active() && this.foreground && this.isForeground(job)) {
         this.foreground.reject(error);
         this.foreground = null;
       }
@@ -426,7 +456,8 @@ export class PdfPageCache {
         try { page.cleanup(); } catch { /* The document may already have been destroyed. */ }
       }
       for (const entry of job.created) {
-        if (!active() || !entry.ready) this.release(entry);
+        // Completed neighbors remain useful even if a later member was interrupted.
+        if (!entry.ready || this.disposed) this.release(entry);
       }
       if (this.running === job) this.running = null;
       this.prune();

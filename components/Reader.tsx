@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
-import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronLeft, ChevronRight, Columns2, LoaderCircle, Maximize, Minimize, RotateCcw } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
+import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronLeft, ChevronRight, Columns2, LoaderCircle, Maximize, Minimize, MoveHorizontal, RotateCcw } from "lucide-react";
 import { ImagePageDocument, type PageDocument } from "@/lib/reader/page-document";
-import type { Book, ReadingDirection } from "@/lib/types";
+import { DEFAULT_READING_DIRECTION, type Book, type ReadingDirection } from "@/lib/types";
 import { PdfPageCache } from "@/lib/reader/page-cache";
 import { WheelPageGesture } from "@/lib/reader/wheel-navigation";
 import { ProgressSaveQueue, type ProgressSnapshot, type SaveStatus } from "@/lib/reader/progress";
@@ -14,6 +14,7 @@ const PAGE_LOADING_DELAY_MS = 200;
 const TAP_MAX_DISTANCE = 12;
 const TAP_MAX_DURATION_MS = 500;
 const TWO_PAGE_STORAGE_KEY = "comic-shelf:two-page-view";
+const SPREAD_OFFSET_STORAGE_PREFIX = "comic-shelf:spread-offset:";
 
 type PageTap = { pointerId: number; x: number; y: number; time: number; target: HTMLButtonElement };
 
@@ -92,8 +93,9 @@ export default function Reader({ bookId }: { bookId: string }) {
   const requestedPage = useRef(1);
   const [pageInput, setPageInput] = useState("1");
   const [editingPage, setEditingPage] = useState(false);
-  const [direction, setDirection] = useState<ReadingDirection>("ltr");
+  const [direction, setDirection] = useState<ReadingDirection>(DEFAULT_READING_DIRECTION);
   const [twoPages, setTwoPages] = useState(false);
+  const [spreadOffset, setSpreadOffset] = useState<0 | 1>(1);
   const [controls, setControls] = useState(true);
   const [touchNavigation, setTouchNavigation] = useState(false);
   const [showTouchHint, setShowTouchHint] = useState(true);
@@ -141,10 +143,77 @@ export default function Reader({ bookId }: { bookId: string }) {
 
   useEffect(() => () => pageCache?.dispose(), [pageCache]);
 
+  useLayoutEffect(() => {
+    const reader = rootRef.current;
+    const viewport = window.visualViewport;
+    if (!reader || !viewport) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      // Fit the visible area when browser chrome or the keyboard changes it.
+      // Pinch zoom must magnify the existing page rather than refit it.
+      if (Math.abs(viewport.scale - 1) > 0.01 || !Number.isFinite(viewport.height) || viewport.height <= 0) return;
+      reader.style.setProperty("--reader-viewport-height", `${viewport.height}px`);
+    };
+    const scheduleMeasure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    };
+    measure();
+    viewport.addEventListener("resize", scheduleMeasure);
+    window.addEventListener("resize", scheduleMeasure);
+    window.addEventListener("pageshow", scheduleMeasure);
+    return () => {
+      cancelAnimationFrame(frame);
+      viewport.removeEventListener("resize", scheduleMeasure);
+      window.removeEventListener("resize", scheduleMeasure);
+      window.removeEventListener("pageshow", scheduleMeasure);
+      reader.style.removeProperty("--reader-viewport-height");
+    };
+  }, []);
+
+  useEffect(() => {
+    const reader = rootRef.current;
+    if (!reader) return;
+
+    // The tap overlay is outside the canvas scroller. Its gestures otherwise
+    // reach the document and can move iPad's native viewport below the reader.
+    // Keep browser pinch zoom and panning a zoomed page available.
+    let multiTouch = false;
+    const startTouch = (event: TouchEvent) => {
+      if (event.touches.length > 1) multiTouch = true;
+    };
+    const endTouch = (event: TouchEvent) => {
+      if (event.touches.length === 0) multiTouch = false;
+    };
+    const preventPagePan = (event: TouchEvent) => {
+      if (multiTouch || event.touches.length !== 1 || (window.visualViewport?.scale ?? 1) > 1.01) return;
+      if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true]")) return;
+      if (event.cancelable) event.preventDefault();
+    };
+    reader.addEventListener("touchstart", startTouch, { passive: true });
+    reader.addEventListener("touchmove", preventPagePan, { passive: false });
+    reader.addEventListener("touchend", endTouch, { passive: true });
+    reader.addEventListener("touchcancel", endTouch, { passive: true });
+    return () => {
+      reader.removeEventListener("touchstart", startTouch);
+      reader.removeEventListener("touchmove", preventPagePan);
+      reader.removeEventListener("touchend", endTouch);
+      reader.removeEventListener("touchcancel", endTouch);
+    };
+  }, []);
+
   useEffect(() => {
     try { setTwoPages(localStorage.getItem(TWO_PAGE_STORAGE_KEY) === "true"); }
     catch { /* Reading remains available when browser storage is disabled. */ }
   }, []);
+
+  useEffect(() => {
+    let offset: 0 | 1 = 1;
+    try { if (localStorage.getItem(`${SPREAD_OFFSET_STORAGE_PREFIX}${bookId}`) === "0") offset = 0; }
+    catch { /* Use cover-first pairing when browser storage is disabled. */ }
+    setSpreadOffset(offset);
+  }, [bookId]);
 
   useEffect(() => {
     // Input capability also covers phones held in landscape, without changing
@@ -252,7 +321,7 @@ export default function Reader({ bookId }: { bookId: string }) {
     async function render() {
       try {
         const spread = twoPages
-          ? await pageCache!.requestSpread(page, layout)
+          ? await pageCache!.requestSpread(page, layout, spreadOffset)
           : { pages: [page], canvases: [await pageCache!.request(page, layout)] };
         if (!active || !surfaceRef.current || requestedPage.current !== page || leavingRef.current) return;
         spread.canvases.forEach((canvas, index) => canvas.setAttribute("aria-label", `${book?.title ?? "Comic"}, page ${spread.pages[index]}`));
@@ -274,7 +343,16 @@ export default function Reader({ bookId }: { bookId: string }) {
         }
         // Only a visible page schedules nearby work; stale navigation cannot
         // warm the wrong neighborhood or change the saved reading position.
-        if (twoPages) pageCache!.prefetchSpread(page, layout);
+        // Keep compressed images farther ahead than the memory-limited canvases.
+        // A resize or pairing change can reuse these downloads too.
+        const first = spread.pages[0];
+        const last = spread.pages.at(-1)!;
+        pageDocument?.prefetch?.([
+          ...spread.pages,
+          ...Array.from({ length: 8 }, (_, index) => last + index + 1),
+          first - 1, first - 2,
+        ].filter(number => number >= 1 && number <= pageDocument.numPages));
+        if (twoPages) pageCache!.prefetchSpread(page, layout, spreadOffset);
         else pageCache!.prefetch(page, layout);
       } catch (error) {
         if (!active || (error instanceof Error && ["AbortError", "RenderingCancelledException"].includes(error.name))) return;
@@ -287,7 +365,7 @@ export default function Reader({ bookId }: { bookId: string }) {
     }
     void render();
     return () => { active = false; window.clearTimeout(loadingTimer); };
-  }, [pageCache, page, size, renderAttempt, book?.title, latest, change, leaving, missing, twoPages, direction]);
+  }, [pageCache, pageDocument, page, size, renderAttempt, book?.title, latest, change, leaving, missing, twoPages, spreadOffset, direction]);
 
   useEffect(() => {
     setPageInput(String(page));
@@ -366,6 +444,15 @@ export default function Reader({ bookId }: { bookId: string }) {
     const value = direction === "ltr" ? "rtl" : "ltr";
     setDirection(value);
     change({ direction: value });
+  };
+
+  const toggleSpreadOffset = () => {
+    const value = spreadOffset === 1 ? 0 : 1;
+    spreadNavigating.current = true;
+    setSpreadOffset(value);
+    wheelGesture.current.reset();
+    try { localStorage.setItem(`${SPREAD_OFFSET_STORAGE_PREFIX}${bookId}`, String(value)); }
+    catch { /* The adjustment still applies for this reading session. */ }
   };
 
   const toggleFullscreen = useCallback(async () => {
@@ -475,6 +562,11 @@ export default function Reader({ bookId }: { bookId: string }) {
             title={twoPages ? "Switch to single-page view" : "Switch to two-page view"}>
             <Columns2 size={19} />
           </button>
+          {twoPages && <button type="button" className="reader-icon-button" onClick={toggleSpreadOffset}
+            disabled={!pageDocument || leaving || missing} aria-label="Shift page pairs" aria-pressed={spreadOffset === 0}
+            title={spreadOffset === 1 ? "Shift page pairs: pair pages 1–2, 3–4" : "Shift page pairs: keep the cover separate, pair pages 2–3, 4–5"}>
+            <MoveHorizontal size={19} />
+          </button>}
           <button type="button" className="reader-icon-button reader-direction" onClick={toggleDirection}
             disabled={!pageDocument || leaving || missing} aria-label={`Reading direction: ${direction === "ltr" ? "Left to right" : "Right to left"}`}
             title={direction === "ltr" ? "Read right to left" : "Read left to right"}>

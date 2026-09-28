@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { open, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import type { Book } from "../types";
+import { DEFAULT_READING_DIRECTION, type Book } from "../types";
 import { ApiError } from "./http";
 import { bookFile, coverFile, getBook, maxUploadBytes, store } from "./storage";
 import { deletePageImages } from "./page-images";
@@ -113,9 +113,11 @@ export async function saveUpload(request: Request): Promise<Book> {
     const pageCount = await inspectPdf(temporaryPdf, temporaryCover);
     await rename(temporaryPdf, destinationPdf);
     await rename(temporaryCover, destinationCover);
-    store().db.prepare(`INSERT INTO books (id, title, originalName, size, pageCount, createdAt, sha256)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, originalName.replace(/\.pdf$/i, "").slice(0, 200) || "Untitled book", originalName, size, pageCount, new Date().toISOString(), sha256);
+    // Write the preference explicitly because existing databases may still
+    // have the previous table default. Saved book preferences stay untouched.
+    store().db.prepare(`INSERT INTO books (id, title, originalName, size, pageCount, direction, createdAt, sha256)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, originalName.replace(/\.pdf$/i, "").slice(0, 200) || "Untitled book", originalName, size, pageCount, DEFAULT_READING_DIRECTION, new Date().toISOString(), sha256);
     committed = true;
     return getBook(id);
   } catch (error) {

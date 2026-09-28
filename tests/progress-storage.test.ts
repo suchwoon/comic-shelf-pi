@@ -118,24 +118,39 @@ it("each account starts fresh and keeps its own page, direction, fit and reading
   for (const user of [alice, bob]) {
     const fresh = getBook(id, user);
     assert.equal(fresh.currentPage, 1);
-    assert.equal(fresh.direction, "ltr");
+    assert.equal(fresh.direction, "rtl");
     assert.equal(fresh.fit, "page");
     assert.equal(fresh.lastReadAt, null);
   }
-  updateProgress(id, { currentPage: 4, direction: "rtl", fit: "width" }, alice);
+  updateProgress(id, { currentPage: 4, direction: "ltr", fit: "width" }, alice);
   assert.equal(getBook(id, bob).currentPage, 1);
   assert.equal(getBook(id, bob).lastReadAt, null);
   updateProgress(id, { currentPage: 2 }, bob);
   const aliceBook = listBooks(alice).find(book => book.id === id)!;
   const bobBook = listBooks(bob).find(book => book.id === id)!;
-  assert.deepEqual([aliceBook.currentPage, aliceBook.direction, aliceBook.fit], [4, "rtl", "width"]);
-  assert.deepEqual([bobBook.currentPage, bobBook.direction, bobBook.fit], [2, "ltr", "page"]);
+  assert.deepEqual([aliceBook.currentPage, aliceBook.direction, aliceBook.fit], [4, "ltr", "width"]);
+  assert.deepEqual([bobBook.currentPage, bobBook.direction, bobBook.fit], [2, "rtl", "page"]);
   assert.ok(aliceBook.lastReadAt);
   assert.ok(bobBook.lastReadAt);
   assert.equal(getBook(id).currentPage, 9);
   closeStore();
   assert.equal(getBook(id, alice).currentPage, 4);
+  assert.equal(getBook(id, alice).direction, "ltr");
   assert.equal(getBook(id, bob).currentPage, 2);
+  assert.equal(getBook(id, bob).direction, "rtl");
+});
+
+it("new books default to RTL and saved LTR preferences survive partial saves and history clearing", () => {
+  const id = createBook();
+  const user = createUser();
+  assert.equal(getBook(id).direction, "rtl");
+  assert.equal(listBooks(user).find(book => book.id === id)?.direction, "rtl");
+  updateProgress(id, { direction: "ltr" });
+  updateProgress(id, { direction: "ltr" }, user);
+  closeStore();
+  assert.equal(updateProgress(id, { currentPage: 3 }).direction, "ltr");
+  assert.equal(updateProgress(id, { currentPage: 2 }, user).direction, "ltr");
+  assert.equal(clearProgress(id, user).direction, "ltr");
 });
 
 it("writer sequence collisions across accounts do not suppress or overwrite their progress", () => {
@@ -214,10 +229,10 @@ it("legacy progress migration is scoped to its administrator and is idempotent",
   const id = createBook();
   const admin = createUser();
   const reader = createUser();
-  updateProgress(id, { currentPage: 5, direction: "rtl", fit: "width", writerId: writerA, sequence: 3 });
+  updateProgress(id, { currentPage: 5, direction: "ltr", fit: "width", writerId: writerA, sequence: 3 });
   migrateLegacyProgress(admin);
   const inherited = getBook(id, admin);
-  assert.deepEqual([inherited.currentPage, inherited.direction, inherited.fit], [5, "rtl", "width"]);
+  assert.deepEqual([inherited.currentPage, inherited.direction, inherited.fit], [5, "ltr", "width"]);
   assert.equal(inherited.lastReadAt, getBook(id).lastReadAt);
   assert.equal(getBook(id, reader).currentPage, 1);
   assert.equal(getBook(id, reader).lastReadAt, null);

@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { Book } from "../types";
+import { DEFAULT_READING_DIRECTION, type Book } from "../types";
 import { ApiError } from "./http";
 
 interface Store { db: DatabaseSync; root: string }
@@ -30,7 +30,7 @@ export function store(): Store {
       size INTEGER NOT NULL CHECK (size > 0),
       pageCount INTEGER NOT NULL CHECK (pageCount > 0),
       currentPage INTEGER NOT NULL DEFAULT 1,
-      direction TEXT NOT NULL DEFAULT 'ltr' CHECK (direction IN ('ltr', 'rtl')),
+      direction TEXT NOT NULL DEFAULT '${DEFAULT_READING_DIRECTION}' CHECK (direction IN ('ltr', 'rtl')),
       fit TEXT NOT NULL DEFAULT 'page' CHECK (fit IN ('page', 'width')),
       createdAt TEXT NOT NULL,
       lastReadAt TEXT,
@@ -48,7 +48,7 @@ export function store(): Store {
 
 const columns = "id, title, originalName, size, pageCount, currentPage, direction, fit, createdAt, lastReadAt";
 const userColumns = `b.id, b.title, b.originalName, b.size, b.pageCount, b.createdAt,
-  COALESCE(p.currentPage, 1) AS currentPage, COALESCE(p.direction, 'ltr') AS direction,
+  COALESCE(p.currentPage, 1) AS currentPage, COALESCE(p.direction, '${DEFAULT_READING_DIRECTION}') AS direction,
   COALESCE(p.fit, 'page') AS fit, p.lastReadAt`;
 
 function ensureUserProgressTables() {
@@ -59,7 +59,7 @@ function ensureUserProgressTables() {
       userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       bookId TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
       currentPage INTEGER NOT NULL DEFAULT 1 CHECK (currentPage > 0),
-      direction TEXT NOT NULL DEFAULT 'ltr' CHECK (direction IN ('ltr', 'rtl')),
+      direction TEXT NOT NULL DEFAULT '${DEFAULT_READING_DIRECTION}' CHECK (direction IN ('ltr', 'rtl')),
       fit TEXT NOT NULL DEFAULT 'page' CHECK (fit IN ('page', 'width')),
       lastReadAt TEXT,
       PRIMARY KEY (userId, bookId)

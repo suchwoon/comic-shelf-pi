@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { PDFDocument } from "pdf-lib";
 import { revealReaderControls } from "./reader-helpers";
 
-async function openBook(page: Page) {
+async function openBook(page: Page, prepare?: (endpoint: string) => Promise<void>) {
   const session = await page.request.post("/api/session", { data: { username: "admin", password: "test-only-comic-shelf-passphrase" } });
   expect(session.ok()).toBe(true);
   const document = await PDFDocument.create();
@@ -16,6 +16,7 @@ async function openBook(page: Page) {
   const { book } = await response.json();
   const endpoint = `/api/books/${book.id}`;
   const path = `/read/${book.id}`;
+  await prepare?.(endpoint);
   await page.goto(path);
   await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "1");
   await revealReaderControls(page);
@@ -92,26 +93,27 @@ test("a failed save keeps the reader open and allows retrying the library naviga
 });
 
 test("a failed page keeps the visible reading position when changing direction and saves after retry", async ({ page }) => {
-  const book = await openBook(page);
   let failPage = true;
   const positions: number[] = [];
-  await page.route(`**${book.endpoint}/pages/4`, async route => {
-    if (failPage) await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary failure" }) });
-    else await route.continue();
+  const book = await openBook(page, async endpoint => {
+    await page.route(`**${endpoint}/pages/4`, async route => {
+      if (failPage) await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary failure" }) });
+      else await route.continue();
+    });
   });
   await page.route(`**${book.endpoint}/progress`, async route => {
     positions.push(route.request().postDataJSON().currentPage);
     await route.continue();
   });
   try {
-    // Page 4 is outside page 1's prefetched neighborhood.
+    // The intercept is installed before prefetch starts as well as navigation.
     await page.getByRole("textbox", { name: "Page number", exact: true }).fill("4");
     await page.getByRole("textbox", { name: "Page number", exact: true }).press("Enter");
     const error = page.locator(".reader-workspace").getByRole("alert");
     await expect(error).toContainText("Unable to load this page");
     await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "1");
-    await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).click();
-    await expect.poll(async () => (await (await page.request.get(book.endpoint)).json()).book.direction).toBe("rtl");
+    await page.getByRole("button", { name: "Reading direction: Right to left", exact: true }).click();
+    await expect.poll(async () => (await (await page.request.get(book.endpoint)).json()).book.direction).toBe("ltr");
     expect(await savedPage(page, book.endpoint)).toBe(1);
     expect(positions.length).toBeGreaterThan(0);
     expect(positions.every(position => position === 1)).toBe(true);
@@ -129,14 +131,15 @@ test("a failed page keeps the visible reading position when changing direction a
 });
 
 test("leaving while an uncached page loads saves only the page that was visible", async ({ page }) => {
-  const book = await openBook(page);
   const started = deferred();
   const release = deferred();
-  await page.route(`**${book.endpoint}/pages/4`, async route => {
-    started.resolve();
-    await release.promise;
-    // Returning to the library aborts this unfinished image request.
-    await route.continue().catch(() => {});
+  const book = await openBook(page, async endpoint => {
+    await page.route(`**${endpoint}/pages/4`, async route => {
+      started.resolve();
+      await release.promise;
+      // Returning to the library aborts this unfinished image request.
+      await route.continue().catch(() => {});
+    });
   });
   try {
     await page.getByRole("textbox", { name: "Page number", exact: true }).fill("4");
@@ -157,27 +160,29 @@ test("leaving while an uncached page loads saves only the page that was visible"
 });
 
 test("a page arriving during the library save does not replace or save the departure page", async ({ page }) => {
-  const book = await openBook(page);
   const saveStarted = deferred();
   const releaseSave = deferred();
   const imageReady = deferred();
   const releaseImage = deferred();
   const positions: number[] = [];
+  const book = await openBook(page, async endpoint => {
+    await page.route(`**${endpoint}/pages/4`, async route => {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      imageReady.resolve();
+      await releaseImage.promise;
+      await route.fulfill({ response });
+    });
+  });
   await page.route(`**${book.endpoint}/progress`, async route => {
     positions.push(route.request().postDataJSON().currentPage);
     saveStarted.resolve();
     await releaseSave.promise;
     await route.continue();
   });
-  await page.route(`**${book.endpoint}/pages/4`, async route => {
-    const response = await route.fetch();
-    expect(response.ok()).toBe(true);
-    imageReady.resolve();
-    await releaseImage.promise;
-    await route.fulfill({ response });
-  });
+
   try {
-    await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).click();
+    await page.getByRole("button", { name: "Reading direction: Right to left", exact: true }).click();
     await saveStarted.promise;
     await page.getByRole("textbox", { name: "Page number", exact: true }).fill("4");
     await page.getByRole("textbox", { name: "Page number", exact: true }).press("Enter");
@@ -221,11 +226,11 @@ test("a book deleted while reading does not trap library navigation after a prog
     deleted = true;
     const missingProgress = page.waitForResponse(response =>
       new URL(response.url()).pathname === `${book.endpoint}/progress` && response.status() === 404);
-    await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).click();
+    await page.getByRole("button", { name: "Reading direction: Right to left", exact: true }).click();
     await missingProgress;
     await expect(page.getByText("This book is no longer in your library.", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Save failed. Retry", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Reading direction: Right to left", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Reading direction: Left to right", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeDisabled();
     await expect(page.getByRole("textbox", { name: "Page number", exact: true })).toBeDisabled();
     await page.evaluate(() => {

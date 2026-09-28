@@ -1,4 +1,5 @@
 export type ReadingDirection = "ltr" | "rtl";
+export const DEFAULT_READING_DIRECTION: ReadingDirection = "rtl";
 export type FitMode = "page" | "width";
 
 export interface Book {

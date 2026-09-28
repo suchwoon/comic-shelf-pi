@@ -62,22 +62,22 @@ test("touch areas navigate with hidden controls, follow reading direction, and r
     await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeHidden();
     await expect(page.getByRole("button", { name: "Show controls", exact: true })).toHaveCount(0);
 
-    await tapArea(page, "Previous page (left area)");
+    await tapArea(page, "Previous page (right area)");
     await expectSavedPage(page, endpoint, 1);
-    await tapArea(page, "Next page (right area)");
+    await tapArea(page, "Next page (left area)");
     await expectSavedPage(page, endpoint, 2);
     await expect(reader).toHaveClass(/reader-controls-hidden/);
-    await tapArea(page, "Previous page (left area)");
+    await tapArea(page, "Previous page (right area)");
     await expectSavedPage(page, endpoint, 1);
 
     await tapArea(page, "Show controls (center area)");
     await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).tap();
-    await expect(page.getByRole("button", { name: "Reading direction: Right to left", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Reading direction: Right to left", exact: true }).tap();
+    await expect(page.getByRole("button", { name: "Reading direction: Left to right", exact: true })).toBeVisible();
     await tapArea(page, "Hide controls (center area)");
-    await tapArea(page, "Next page (left area)");
+    await tapArea(page, "Next page (right area)");
     await expectSavedPage(page, endpoint, 2);
-    await tapArea(page, "Previous page (right area)");
+    await tapArea(page, "Previous page (left area)");
     await expectSavedPage(page, endpoint, 1);
 
     await tapArea(page, "Show controls (center area)");
@@ -85,16 +85,16 @@ test("touch areas navigate with hidden controls, follow reading direction, and r
     await page.getByLabel("Page number").press("Enter");
     await expectSavedPage(page, endpoint, 8);
     await tapArea(page, "Hide controls (center area)");
-    await tapArea(page, "Next page (left area)");
+    await tapArea(page, "Next page (right area)");
     await expectSavedPage(page, endpoint, 8);
-    await tapArea(page, "Previous page (right area)");
+    await tapArea(page, "Previous page (left area)");
     await expectSavedPage(page, endpoint, 7);
-    await expect.poll(async () => (await (await page.request.get(endpoint)).json()).book.direction).toBe("rtl");
+    await expect.poll(async () => (await (await page.request.get(endpoint)).json()).book.direction).toBe("ltr");
 
     await page.reload();
     await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "7");
     await expect(reader).toHaveClass(/reader-controls-hidden/);
-    await tapArea(page, "Next page (left area)");
+    await tapArea(page, "Next page (right area)");
     await expectSavedPage(page, endpoint, 8);
   } finally {
     await removeBook(page, endpoint);
@@ -133,7 +133,7 @@ test("mobile controls overlay the same fitted canvas in portrait and landscape",
       await canvas!.dispose();
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
-    await tapArea(page, "Next page (right area)");
+    await tapArea(page, "Next page (left area)");
     await expectSavedPage(page, endpoint, 2);
     await page.screenshot({ path: testInfo.outputPath("reader-touch-landscape.png"), fullPage: true });
   } finally {
@@ -146,7 +146,7 @@ test("dragging, long presses, cancelled touches, multitouch, and zoom do not tur
   const endpoint = await openBook(page);
   try {
     for (const gesture of ["drag", "long", "cancel", "multi"] as const) {
-      await page.getByRole("button", { name: "Next page (right area)", exact: true }).evaluate((target, kind) => {
+      await page.getByRole("button", { name: "Next page (left area)", exact: true }).evaluate((target, kind) => {
         const bounds = target.getBoundingClientRect();
         const x = bounds.x + bounds.width / 2;
         const y = bounds.y + bounds.height / 2;
@@ -177,17 +177,17 @@ test("dragging, long presses, cancelled touches, multitouch, and zoom do not tur
       await expect(page.getByTestId("pdf-page"), `${gesture} should not turn a page`).toHaveAttribute("data-page", "1");
       await expect(page.locator(".reader-root")).toHaveClass(/reader-controls-hidden/);
       // A rejected gesture must not swallow the next deliberate tap.
-      await tapArea(page, "Next page (right area)");
+      await tapArea(page, "Next page (left area)");
       await expectSavedPage(page, endpoint, 2);
-      await tapArea(page, "Previous page (left area)");
+      await tapArea(page, "Previous page (right area)");
       await expectSavedPage(page, endpoint, 1);
     }
 
-    const next = page.getByRole("button", { name: "Next page (right area)", exact: true });
+    const next = page.getByRole("button", { name: "Next page (left area)", exact: true });
     expect(await next.evaluate(element => getComputedStyle(element).touchAction)).toBe("manipulation");
     await page.evaluate(() => Object.defineProperty(window.visualViewport!, "scale", { configurable: true, value: 2 }));
     try {
-      await tapArea(page, "Next page (right area)");
+      await tapArea(page, "Next page (left area)");
       await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "1");
       await tapArea(page, "Show controls (center area)");
       await expect(page.getByRole("button", { name: "Two-page view", exact: true })).toBeVisible();
@@ -195,7 +195,7 @@ test("dragging, long presses, cancelled touches, multitouch, and zoom do not tur
     } finally {
       await page.evaluate(() => Reflect.deleteProperty(window.visualViewport!, "scale"));
     }
-    await tapArea(page, "Next page (right area)");
+    await tapArea(page, "Next page (left area)");
     await expectSavedPage(page, endpoint, 2);
   } finally {
     await removeBook(page, endpoint);
@@ -237,7 +237,7 @@ test("desktop page clicks toggle controls, retain the canvas, and allow keyboard
     await next.click();
     await expectSavedPage(page, endpoint, 2);
     await expect(next).toBeVisible();
-    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowLeft");
     await expectSavedPage(page, endpoint, 3);
     await page.keyboard.press("h");
     await expect(next).toBeHidden();

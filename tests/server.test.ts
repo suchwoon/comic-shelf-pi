@@ -3,6 +3,7 @@ import { after, before, describe, it } from "node:test";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { PDFDocument, StandardFonts } from "pdf-lib";
@@ -142,12 +143,38 @@ describe("streamed uploads and persistent reading state", () => {
     assert.equal(book.originalName, "작은 만화.pdf");
     assert.equal(book.pageCount, 6);
     assert.equal(book.currentPage, 1);
+    assert.equal(book.direction, "rtl");
     assert.equal(book.lastReadAt, null);
     assert.equal(book.size, fixture.length);
     assert.deepEqual(new Uint8Array(await readFile(bookFile(book.id))), fixture);
     assert.deepEqual((await readFile(coverFile(book.id))).subarray(0, 2), Buffer.from([0xff, 0xd8]));
     assert.equal(listBooks().length, 1);
     assert.deepEqual(await readdir(join(dataDir, "tmp")), []);
+  });
+
+  it("uploads use RTL even when an existing database still has the previous LTR schema default", async () => {
+    const legacyDir = await mkdtemp(join(tmpdir(), "comic-shelf-legacy-default-"));
+    const legacy = new DatabaseSync(join(legacyDir, "library.sqlite"));
+    legacy.exec(`CREATE TABLE books (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, originalName TEXT NOT NULL,
+      size INTEGER NOT NULL, pageCount INTEGER NOT NULL,
+      currentPage INTEGER NOT NULL DEFAULT 1,
+      direction TEXT NOT NULL DEFAULT 'ltr', fit TEXT NOT NULL DEFAULT 'page',
+      createdAt TEXT NOT NULL, lastReadAt TEXT, sha256 TEXT NOT NULL UNIQUE
+    )`);
+    legacy.close();
+    process.env.DATA_DIR = legacyDir;
+    try {
+      const uploaded = await saveUpload(upload());
+      assert.equal(uploaded.direction, "rtl");
+      assert.equal(getBook(uploaded.id).direction, "rtl");
+    } finally {
+      const shared = globalThis as typeof globalThis & { __comicStore?: { db: { close(): void } } };
+      shared.__comicStore?.db.close();
+      delete shared.__comicStore;
+      process.env.DATA_DIR = dataDir;
+      await rm(legacyDir, { recursive: true, force: true });
+    }
   });
 
   it("rejects duplicates, fake PDFs, invalid filenames, corrupted documents, and oversized streams without leftovers", async () => {

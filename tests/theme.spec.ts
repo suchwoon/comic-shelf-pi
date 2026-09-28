@@ -3,11 +3,11 @@ import { PDFDocument, rgb } from "pdf-lib";
 
 const storageKey = "comic-shelf-theme";
 
-async function expectTheme(page: Page, theme: "light" | "dark") {
+async function expectTheme(page: Page, theme: "light" | "dark", reader = false) {
   await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
   await expect(page.locator('meta[name="theme-color"]')).toHaveCount(1);
   await expect(page.locator("html")).toHaveCSS("color-scheme", theme);
-  await expect(page.locator("body")).toHaveCSS("background-color", theme === "dark" ? "rgb(20, 20, 20)" : "rgb(250, 250, 250)");
+  await expect(page.locator("body")).toHaveCSS("background-color", reader || theme === "dark" ? "rgb(20, 20, 20)" : "rgb(250, 250, 250)");
 }
 
 async function expectReadableDarkControl(locator: Locator) {
@@ -247,7 +247,10 @@ test("dark appearance preserves cover and PDF colors and the reader stays dark i
     otherTab = await context.newPage();
     await otherTab.goto("/");
     await otherTab.getByRole("button", { name: "Switch to light mode", exact: true }).click();
-    await expectTheme(page, "light");
+    // The shelf preference changes, while the reader's document background
+    // stays dark so viewport insets cannot reveal a white strip.
+    await expectTheme(page, "light", true);
+    await expectTheme(otherTab, "light");
     await expect(page.locator(".reader-root")).toHaveCSS("background-color", "rgb(20, 20, 20)");
     await expect(page.locator(".reader-root")).toHaveCSS("color-scheme", "dark");
     await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#141414");

@@ -58,18 +58,18 @@ test("reads scanned page images, normalizes legacy width fit, and restores readi
   const dimensions = await page.getByTestId("pdf-page").boundingBox();
   expect(dimensions!.width).toBeGreaterThan(dimensions!.height);
   await expectPageFits(page);
-  await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).click();
+  await page.getByRole("button", { name: "Reading direction: Right to left", exact: true }).click();
   await page.getByRole("button", { name: "Next page", exact: true }).click({ clickCount: 3 });
   await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "7");
   await expect(page.getByTestId("pdf-page")).toHaveCount(1);
   await expect.poll(async () => {
     const { book: saved } = await (await page.request.get(endpoint)).json();
     return [saved.currentPage, saved.direction, saved.fit];
-  }).toEqual([7, "rtl", "page"]);
+  }).toEqual([7, "ltr", "page"]);
   await page.reload();
   await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "7");
   await revealReaderControls(page);
-  await expect(page.getByRole("button", { name: "Reading direction: Right to left", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reading direction: Left to right", exact: true })).toBeVisible();
   await expectPageFits(page);
   expect(pageImages).toContain(`${endpoint}/pages/1`);
   expect(pageImages).toContain(`${endpoint}/pages/4`);

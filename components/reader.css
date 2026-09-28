@@ -1,4 +1,7 @@
-.reader-root { --reader-edge: 20px; position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; height: 100dvh; overflow: hidden; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); background: #141414; color: #ededed; color-scheme: dark; }
+/* Lock the initial server-rendered reader too, before React hydrates. */
+html:has(.reader-root), body:has(.reader-root) { overflow: hidden; overscroll-behavior: none; background: #141414; }
+body:has(.reader-root) { position: fixed; inset: 0; }
+.reader-root { --reader-edge: 20px; position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; height: var(--reader-viewport-height, 100dvh); overflow: hidden; overscroll-behavior: none; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); background: #141414; color: #ededed; color-scheme: dark; }
 .reader-root button { border: 0; }
 .reader-root :is(button, a, input):focus-visible { outline: 2px solid #ededed; outline-offset: 3px; }
 .reader-root .reader-floating { background: #242424; border: 1px solid #3a3a3a; box-shadow: 0 2px 8px #0003; }
@@ -51,6 +54,7 @@
 .reader-toast { position: absolute; z-index: 10; bottom: calc(128px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 20px; width: max-content; max-width: calc(100% - 32px); padding: 12px 16px; border: 1px solid #404040; border-radius: 18px; background: #262626; color: #e5e5e5; font-size: 12px; line-height: 1.6; }
 .reader-toast button { min-height: 44px; padding: 3px; background: transparent; color: #ededed; font-size: 12px; white-space: nowrap; }
 .reader-touch .reader-canvas-center { padding: 0; }
+.reader-touch .reader-page-form input { font-size: 16px; }
 .reader-tap-zones { position: absolute; inset: 0; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr); }
 .reader-touch .reader-tap-zones { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .reader-tap-zone { width: 100%; height: 100%; padding: 0; border-radius: 0; background: transparent; color: inherit; touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }

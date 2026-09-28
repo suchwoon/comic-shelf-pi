@@ -148,6 +148,36 @@ test("immediately displays prepared next and previous pages using the same canva
   }
 });
 
+test("downloads ahead of the canvas window and reuses those images after resizing", async ({ page }) => {
+  const book = await uploadBook(page);
+  let ninthPageRequests = 0;
+  page.on("request", request => {
+    if (new URL(request.url()).pathname === `${book.endpoint}/pages/9`) ninthPageRequests++;
+  });
+  const prepared = page.waitForResponse(response =>
+    new URL(response.url()).pathname === `${book.endpoint}/pages/9` && response.ok());
+  try {
+    await page.goto(book.path);
+    await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "1", { timeout: 40_000 });
+    await (await prepared).finished();
+    await revealReaderControls(page);
+    const viewport = page.viewportSize()!;
+    await page.setViewportSize({ width: Math.max(320, viewport.width - 50), height: viewport.height - 100 });
+    await expectPageFits(page);
+    // Once prefetched, navigation must succeed even if a repeat download fails.
+    await page.route(`**${book.endpoint}/pages/9`, route => route.abort());
+    await page.getByRole("textbox", { name: "Page number", exact: true }).fill("9");
+    await page.getByRole("textbox", { name: "Page number", exact: true }).press("Enter");
+    await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "9");
+    await expectPageFits(page);
+    expect(ninthPageRequests).toBe(1);
+  } finally {
+    await page.goto("about:blank").catch(() => {});
+    await page.unrouteAll({ behavior: "wait" });
+    expect((await page.request.delete(book.endpoint)).status()).toBe(204);
+  }
+});
+
 test("resizing replaces outdated canvases and rapid navigation displays the final fitted page", async ({ page }, testInfo) => {
   const browserErrors: string[] = [];
   page.on("pageerror", error => browserErrors.push(error.message));

@@ -90,7 +90,7 @@ test("floating icon controls fit narrow screens and screen toggles keep the page
       await expectPages(page, [1]);
       const canvas = await page.getByTestId("pdf-page").elementHandle();
       const before = await page.getByTestId("pdf-page").boundingBox();
-      const names = ["Two-page view", "Reading direction: Left to right"];
+      const names = ["Two-page view", "Reading direction: Right to left"];
       if (await page.evaluate(() => document.fullscreenEnabled)) names.push("Enter fullscreen");
       for (const name of names) {
         const button = heading.getByRole("button", { name, exact: true });
@@ -148,6 +148,8 @@ test("direction arrows show the current direction and spreads follow it through 
   try {
     const mode = page.getByRole("button", { name: "Two-page view", exact: true });
     await expect(mode).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByRole("button", { name: "Reading direction: Right to left", exact: true }).locator("svg")).toHaveClass(/lucide-arrow-left/);
+    await page.getByRole("button", { name: "Reading direction: Right to left", exact: true }).click();
     await expect(page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).locator("svg")).toHaveClass(/lucide-arrow-right/);
     await mode.click();
     await expect(mode).toHaveAttribute("aria-pressed", "true");
@@ -208,13 +210,13 @@ test("changing the view preserves the exact page and remembers the preference af
     await jumpToPage(page, 3);
     await expectPages(page, [3]);
     await mode.click();
-    await expectPages(page, [2, 3]);
+    await expectPages(page, [3, 2]);
     await input.focus();
     await expect(input).toHaveValue("3");
     await expectSavedPage(page, endpoint, 3);
     expect(await page.evaluate(() => localStorage.getItem("comic-shelf:two-page-view"))).toBe("true");
     await page.reload();
-    await expectPages(page, [2, 3]);
+    await expectPages(page, [3, 2]);
     await revealReaderControls(page);
     await expect(mode).toHaveAttribute("aria-pressed", "true");
     await mode.click();
@@ -227,6 +229,60 @@ test("changing the view preserves the exact page and remembers the preference af
     await expect(mode).toHaveAttribute("aria-pressed", "false");
   } finally {
     await removeBook(page, endpoint);
+  }
+});
+
+test("page pairing can shift for each book without losing the bookmark", async ({ page }) => {
+  const endpoint = await openBook(page);
+  let otherEndpoint: string | undefined;
+  try {
+    const mode = page.getByRole("button", { name: "Two-page view", exact: true });
+    const shift = page.getByRole("button", { name: "Shift page pairs", exact: true });
+    await expect(shift).toHaveCount(0);
+    await jumpToPage(page, 3);
+    await expectPages(page, [3]);
+    await mode.click();
+    await expectPages(page, [3, 2]);
+    await expect(shift).toHaveAttribute("aria-pressed", "false");
+    await shift.click();
+    await expectPages(page, [4, 3]);
+    await expect(shift).toHaveAttribute("aria-pressed", "true");
+    await expectSavedPage(page, endpoint, 3);
+    await expectPagesFit(page);
+    await page.reload();
+    await expectPages(page, [4, 3]);
+    await revealReaderControls(page);
+    await expect(shift).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Previous page", exact: true }).click();
+    await expectPages(page, [2, 1]);
+    await expect(page.getByRole("button", { name: "Previous page", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Next page", exact: true }).click();
+    await expectPages(page, [4, 3]);
+    await page.getByRole("button", { name: "Reading direction: Right to left", exact: true }).click();
+    await expectPages(page, [3, 4]);
+    await jumpToPage(page, 8);
+    await expectPages(page, [7, 8]);
+    await expect(page.getByRole("button", { name: "Next page", exact: true })).toBeDisabled();
+    await shift.click();
+    await expectPages(page, [8]);
+    await shift.click();
+    await expectPages(page, [7, 8]);
+    await expectSavedPage(page, endpoint, 8);
+    await page.setViewportSize({ width: 320, height: 568 });
+    await expectPagesFit(page);
+    const bounds = (await shift.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+
+    // The global two-page preference survives, but pairing belongs to this book.
+    otherEndpoint = await openBook(page);
+    await expectPages(page, [1]);
+    await expect(shift).toHaveAttribute("aria-pressed", "false");
+    await page.getByRole("button", { name: "Next page", exact: true }).click();
+    await expectPages(page, [3, 2]);
+  } finally {
+    await removeBook(page, endpoint);
+    if (otherEndpoint) expect((await page.request.delete(otherEndpoint)).status()).toBe(204);
   }
 });
 
@@ -249,7 +305,7 @@ test("wheel gestures turn one page or spread, keep their direction in RTL, and i
     await page.waitForTimeout(650);
     await page.mouse.wheel(0, -120);
     await expectPages(page, [1]);
-    await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).click();
+    await page.getByRole("button", { name: "Reading direction: Right to left", exact: true }).click();
     await page.waitForTimeout(650);
     await pageArea.hover();
     await page.mouse.wheel(0, 120);
@@ -259,6 +315,7 @@ test("wheel gestures turn one page or spread, keep their direction in RTL, and i
     await page.locator(".reader-heading").dispatchEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120 });
     await page.getByRole("textbox", { name: "Page number", exact: true }).dispatchEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120 });
     await expectPages(page, [2]);
+    await page.getByRole("button", { name: "Reading direction: Left to right", exact: true }).click();
     await page.getByRole("button", { name: "Two-page view", exact: true }).click();
     await expectPages(page, [3, 2]);
     await pageArea.hover();
@@ -278,7 +335,7 @@ test("landscape pages split their fixed pair without shifting the following spre
   const endpoint = await openBook(page, [3, 6]);
   try {
     await page.getByRole("button", { name: "Two-page view", exact: true }).click();
-    const spreads = [[1], [2], [3], [4, 5], [6], [7], [8]];
+    const spreads = [[1], [2], [3], [5, 4], [6], [7], [8]];
     await expectPages(page, spreads[0]);
     for (const spread of spreads.slice(1)) {
       await page.getByRole("button", { name: "Next page", exact: true }).click();
@@ -296,15 +353,16 @@ test("landscape pages split their fixed pair without shifting the following spre
 });
 
 test("a spread replaces the previous page and saves progress only after both images load", async ({ page }) => {
-  const endpoint = await openBook(page);
   let releaseImage!: () => void;
   const heldImage = new Promise<void>(resolve => { releaseImage = resolve; });
   let imageRequested = false;
   const positions: number[] = [];
-  await page.route(`**${endpoint}/pages/5`, async route => {
-    imageRequested = true;
-    await heldImage;
-    await route.continue().catch(() => {});
+  const endpoint = await openBook(page, [], async path => {
+    await page.route(`**${path}/pages/5`, async route => {
+      imageRequested = true;
+      await heldImage;
+      await route.continue().catch(() => {});
+    });
   });
   await page.route(`**${endpoint}/progress`, async route => {
     positions.push(route.request().postDataJSON().currentPage);
@@ -322,7 +380,7 @@ test("a spread replaces the previous page and saves progress only after both ima
     expect((await (await page.request.get(endpoint)).json()).book.currentPage).toBe(1);
     expect(positions.every(position => position === 1)).toBe(true);
     releaseImage();
-    await expectPages(page, [4, 5]);
+    await expectPages(page, [5, 4]);
     await expectSavedPage(page, endpoint, 4);
     expect(positions).toContain(4);
   } finally {
@@ -357,7 +415,7 @@ test("a failed next spread keeps the visible bookmark and retries through Next p
     expect(positions.every(position => position === 1)).toBe(true);
     failImage = false;
     await page.getByRole("button", { name: "Next page", exact: true }).click();
-    await expectPages(page, [2, 3]);
+    await expectPages(page, [3, 2]);
     await expect(page.locator(".reader-workspace").getByRole("alert")).toHaveCount(0);
     await expectSavedPage(page, endpoint, 2);
   } finally {
