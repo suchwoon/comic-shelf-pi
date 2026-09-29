@@ -150,10 +150,13 @@ export default function Reader({ bookId }: { bookId: string }) {
     let frame = 0;
     const measure = () => {
       frame = 0;
-      // Fit the visible area when browser chrome or the keyboard changes it.
-      // Pinch zoom must magnify the existing page rather than refit it.
-      if (Math.abs(viewport.scale - 1) > 0.01 || !Number.isFinite(viewport.height) || viewport.height <= 0) return;
-      reader.style.setProperty("--reader-viewport-height", `${viewport.height}px`);
+      // Entering from a scrolled shelf can leave the visual viewport displaced
+      // inside the layout viewport. Match its origin as well as its height.
+      // Freeze both during pinch zoom so the user can magnify and pan the page.
+      const { height, offsetTop, scale } = viewport;
+      if (Math.abs(scale - 1) > 0.01 || !Number.isFinite(height) || height <= 0 || !Number.isFinite(offsetTop)) return;
+      reader.style.setProperty("--reader-viewport-height", `${height}px`);
+      reader.style.setProperty("--reader-viewport-top", `${offsetTop}px`);
     };
     const scheduleMeasure = () => {
       cancelAnimationFrame(frame);
@@ -161,14 +164,19 @@ export default function Reader({ bookId }: { bookId: string }) {
     };
     measure();
     viewport.addEventListener("resize", scheduleMeasure);
+    viewport.addEventListener("scroll", scheduleMeasure);
     window.addEventListener("resize", scheduleMeasure);
+    window.addEventListener("scroll", scheduleMeasure, { passive: true });
     window.addEventListener("pageshow", scheduleMeasure);
     return () => {
       cancelAnimationFrame(frame);
       viewport.removeEventListener("resize", scheduleMeasure);
+      viewport.removeEventListener("scroll", scheduleMeasure);
       window.removeEventListener("resize", scheduleMeasure);
+      window.removeEventListener("scroll", scheduleMeasure);
       window.removeEventListener("pageshow", scheduleMeasure);
       reader.style.removeProperty("--reader-viewport-height");
+      reader.style.removeProperty("--reader-viewport-top");
     };
   }, []);
 

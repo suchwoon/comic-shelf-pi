@@ -1,7 +1,7 @@
 /* Lock the initial server-rendered reader too, before React hydrates. */
 html:has(.reader-root), body:has(.reader-root) { overflow: hidden; overscroll-behavior: none; background: #141414; }
 body:has(.reader-root) { position: fixed; inset: 0; }
-.reader-root { --reader-edge: 20px; position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; height: var(--reader-viewport-height, 100dvh); overflow: hidden; overscroll-behavior: none; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); background: #141414; color: #ededed; color-scheme: dark; }
+.reader-root { --reader-edge: 20px; position: fixed; inset: var(--reader-viewport-top, 0px) 0 auto; z-index: 30; display: flex; flex-direction: column; height: var(--reader-viewport-height, 100dvh); overflow: hidden; overscroll-behavior: none; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); background: #141414; color: #ededed; color-scheme: dark; }
 .reader-root button { border: 0; }
 .reader-root :is(button, a, input):focus-visible { outline: 2px solid #ededed; outline-offset: 3px; }
 .reader-root .reader-floating { background: #242424; border: 1px solid #3a3a3a; box-shadow: 0 2px 8px #0003; }

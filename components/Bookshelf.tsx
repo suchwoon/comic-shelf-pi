@@ -42,13 +42,14 @@ async function readError(response: Response, fallback: string) {
 }
 
 function BookCover({ book, small = false }: { book: Book; small?: boolean }) {
-  const [failed, setFailed] = useState(false);
+  const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
   return (
     <div className={`shelf-cover${small ? " shelf-cover-small" : ""}`}>
-      <div className="shelf-cover-fallback" aria-hidden="true">
+      {status !== "loaded" && <div className="shelf-cover-fallback" aria-hidden="true">
         <BookOpen size={small ? 20 : 32} strokeWidth={1.2} />
-      </div>
-      {!failed && <img src={`/api/books/${book.id}/cover`} alt="" loading="lazy" onError={() => setFailed(true)} />}
+      </div>}
+      {status !== "error" && <img src={`/api/books/${book.id}/cover`} alt="" loading="lazy"
+        onLoad={() => setStatus("loaded")} onError={() => setStatus("error")} />}
     </div>
   );
 }
@@ -395,7 +396,7 @@ export default function Bookshelf() {
         </div>
         {recent && !loading && (
           <Link href={`/read/${recent.id}`} onClick={openReader} className="shelf-continue" aria-label={`Continue reading ${recent.title}`}>
-            <BookCover book={recent} small />
+            <BookCover key={recent.id} book={recent} small />
             <div className="shelf-continue-copy"><span>Continue reading</span><h2 title={recent.title}>{recent.title}</h2><p>Page {recent.currentPage} of {recent.pageCount}</p></div>
             <ArrowRight size={17} />
           </Link>

@@ -1,4 +1,5 @@
 import { test, expect, type Browser, type Locator, type Page } from "@playwright/test";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { PDFDocument, rgb } from "pdf-lib";
 import { hideReaderControls, revealReaderControls } from "./reader-helpers";
 
@@ -24,6 +25,10 @@ async function openTabletBook(browser: Browser, baseURL: string | undefined, ret
     for (let number = 1; number <= 3; number++) {
       const sheet = pdf.addPage([400, 600]);
       sheet.drawRectangle({ x: 0, y: 0, width: 400, height: 600, color: rgb(0.9, 0.92, number / 4) });
+      // Full-width edge markers reveal clipping even when the reader backdrop
+      // hides an uncovered part of the visible viewport.
+      sheet.drawRectangle({ x: 0, y: 594, width: 400, height: 6, color: rgb(1, 0, 0) });
+      sheet.drawRectangle({ x: 0, y: 0, width: 400, height: 6, color: rgb(0, 0, 1) });
     }
     const response = await page.request.post("/api/books", {
       headers: { "Content-Type": "application/pdf", "X-File-Name": "reader-viewport.pdf" },
@@ -60,19 +65,19 @@ async function openTabletBook(browser: Browser, baseURL: string | undefined, ret
   }
 }
 
-async function expectViewportFilled(page: Page, visibleHeight?: number) {
-  await expect.poll(() => page.locator(".reader-root").evaluate((reader, expectedHeight) => {
+async function expectViewportFilled(page: Page, visibleHeight?: number, visibleTop = 0) {
+  await expect.poll(() => page.locator(".reader-root").evaluate((reader, { expectedHeight, expectedTop }) => {
     const bounds = reader.getBoundingClientRect();
     const canvas = reader.querySelector("canvas")!.getBoundingClientRect();
     const heightTolerance = expectedHeight === undefined ? 1 : 0.1;
     return scrollX === 0 && scrollY === 0
-      && Math.abs(bounds.top) <= 1 && Math.abs(bounds.left) <= 1
-      && Math.abs(bounds.bottom - (expectedHeight ?? innerHeight)) <= heightTolerance && Math.abs(bounds.right - innerWidth) <= 1
+      && Math.abs(bounds.top - expectedTop) <= heightTolerance && Math.abs(bounds.left) <= 1
+      && Math.abs(bounds.bottom - (expectedTop + (expectedHeight ?? innerHeight))) <= heightTolerance && Math.abs(bounds.right - innerWidth) <= 1
       && canvas.width > 0 && canvas.height > 0
       && (expectedHeight === undefined || Math.abs(canvas.height - expectedHeight) < 2)
       && canvas.top >= bounds.top - 1 && canvas.left >= bounds.left - 1
       && canvas.bottom <= bounds.bottom + 1 && canvas.right <= bounds.right + 1;
-  }, visibleHeight)).toBe(true);
+  }, { expectedHeight: visibleHeight, expectedTop: visibleTop })).toBe(true);
 }
 
 async function swipeVertically(page: Page) {
@@ -186,6 +191,103 @@ test("reader follows the unzoomed visual viewport while preserving its layout du
     expect(await page.evaluate(() => innerHeight)).toBe(layoutHeight);
     await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "1");
   } finally {
+    await page.goto("about:blank").catch(() => {});
+    expect((await page.request.delete(endpoint)).status()).toBe(204);
+    await context.close();
+  }
+});
+
+test("tablet reader follows visible viewport offsets when first opening a book from the shelf", async ({ browser, baseURL }, testInfo) => {
+  test.skip(testInfo.project.name === "mobile", "Uses its own tablet context");
+  const initialViewport = { height: 1002, offsetTop: 178 };
+  const { context, page, endpoint } = await openTabletBook(browser, baseURL, true, async page => {
+    await page.addInitScript(({ height, offsetTop }) => {
+      Object.defineProperties(window.visualViewport!, {
+        height: { configurable: true, value: height },
+        offsetTop: { configurable: true, value: offsetTop },
+        scale: { configurable: true, value: 1 },
+      });
+    }, initialViewport);
+  });
+  const setVisibleViewport = (height: number, offsetTop: number, scale = 1, event: "resize" | "scroll" = "resize") => page.evaluate(({ height, offsetTop, scale, event }) => {
+    Object.defineProperties(window.visualViewport!, {
+      height: { configurable: true, value: height },
+      offsetTop: { configurable: true, value: offsetTop },
+      scale: { configurable: true, value: scale },
+    });
+    window.visualViewport!.dispatchEvent(new Event(event));
+  }, { height, offsetTop, scale, event });
+  try {
+    const layoutHeight = await page.evaluate(() => innerHeight);
+    await expectViewportFilled(page, initialViewport.height, initialViewport.offsetTop);
+
+    // Browser chrome can pan the visible area without changing its height.
+    await setVisibleViewport(1002, 90.25, 1, "scroll");
+    await expectViewportFilled(page, 1002, 90.25);
+
+    await setVisibleViewport(501, 260, 2);
+    await setVisibleViewport(501, 310, 2, "scroll");
+    await page.waitForTimeout(300);
+    await expectViewportFilled(page, 1002, 90.25);
+
+    await setVisibleViewport(900.5, 140.25);
+    await expectViewportFilled(page, 900.5, 140.25);
+    // A keyboard can shrink and move the visible rectangle together.
+    await setVisibleViewport(620, 560);
+    await expectViewportFilled(page, 620, 560);
+    await setVisibleViewport(portrait.height, 0);
+    await expectViewportFilled(page, portrait.height);
+    expect(await page.evaluate(() => innerHeight)).toBe(layoutHeight);
+    await expect(page.getByTestId("pdf-page")).toHaveAttribute("data-page", "1");
+  } finally {
+    await page.goto("about:blank").catch(() => {});
+    expect((await page.request.delete(endpoint)).status()).toBe(204);
+    await context.close();
+  }
+});
+
+test("tablet reader keeps both PDF edge markers visible in an offset browser viewport", async ({ browser, baseURL }, testInfo) => {
+  test.skip(testInfo.project.name === "mobile" || browser.browserType().name() !== "chromium", "Uses a tablet context and Chromium's render viewport override");
+  const visibleViewport = { height: 1002, offsetTop: 178 };
+  const { context, page, endpoint } = await openTabletBook(browser, baseURL, false, async page => {
+    await page.addInitScript(({ height, offsetTop }) => {
+      Object.defineProperties(window.visualViewport!, {
+        height: { configurable: true, value: height },
+        offsetTop: { configurable: true, value: offsetTop },
+        scale: { configurable: true, value: 1 },
+      });
+    }, visibleViewport);
+  });
+  const session = await context.newCDPSession(page);
+  let screenshot: Buffer | undefined;
+  try {
+    // CDP shifts actual rendered pixels without changing layout coordinates.
+    // It does not expose that crop through visualViewport, hence the matching
+    // metric overrides above. This models clipping, not native iPad chrome.
+    await session.send("Emulation.setDeviceMetricsOverride", {
+      ...portrait, deviceScaleFactor: 1, mobile: true,
+      viewport: { x: 0, y: visibleViewport.offsetTop, width: portrait.width, height: visibleViewport.height, scale: 1 },
+    });
+    await expect.poll(async () => {
+      const captured = await session.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+      const image = await loadImage(Buffer.from(captured.data, "base64"));
+      const visible = createCanvas(portrait.width, visibleViewport.height);
+      const pixels = visible.getContext("2d");
+      // The CDP image retains the full display's height. Only the first
+      // visualViewport.height pixels represent the simulated visible area.
+      const ratio = image.width / portrait.width;
+      pixels.drawImage(image, 0, 0, image.width, visibleViewport.height * ratio, 0, 0, portrait.width, visibleViewport.height);
+      screenshot = visible.toBuffer("image/png");
+      const matches = (y: number, color: number[]) => {
+        const actual = pixels.getImageData(portrait.width / 2, y, 1, 1).data;
+        return color.every((channel, index) => Math.abs(actual[index] - channel) <= 6);
+      };
+      return { top: matches(4, [255, 0, 0]), bottom: matches(visibleViewport.height - 5, [0, 0, 255]) };
+    }).toEqual({ top: true, bottom: true });
+    expect(await page.evaluate(() => scrollY)).toBe(0);
+  } finally {
+    if (screenshot) await testInfo.attach("offset-visible-viewport", { body: screenshot, contentType: "image/png" });
+    await session.detach();
     await page.goto("about:blank").catch(() => {});
     expect((await page.request.delete(endpoint)).status()).toBe(204);
     await context.close();
