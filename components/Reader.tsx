@@ -602,9 +602,6 @@ export default function Reader({ bookId }: { bookId: string }) {
             disabled={!pageDocument || !pageReady || missing || (leftIsNext ? atStart : atEnd)}
             aria-label={`${leftIsNext ? "Previous" : "Next"} page (right area)`} />}
         </div>
-        {!touchNavigation && pageReady && showTouchHint && controls && <p className="reader-screen-hint" role="status">
-          Click the page to hide controls. Press H to toggle.
-        </p>}
         {touchNavigation && pageReady && showTouchHint && !controls && <p className="reader-touch-hint" role="status">
           Tap the sides to turn pages. Tap the center for controls.
         </p>}
@@ -625,6 +622,9 @@ export default function Reader({ bookId }: { bookId: string }) {
       </main>
 
       <footer className="reader-footer">
+        {!touchNavigation && pageReady && showTouchHint && controls && <p className="reader-screen-hint" role="status">
+          Click the page to hide controls. Press H to toggle.
+        </p>}
         <div className="reader-save-status reader-floating" role="status">
           {missing ? <span>Book deleted</span> : saveStatus === "error" ? (
             <button type="button" onClick={() => void flush()} title="Progress could not be saved. Retry" aria-label="Save failed. Retry"><RotateCcw size={14} /><span>Retry save</span></button>

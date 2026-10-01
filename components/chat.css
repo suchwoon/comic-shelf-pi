@@ -1,4 +1,6 @@
-.shelf-chat-launcher { position: fixed; right: 24px; bottom: max(24px, env(safe-area-inset-bottom)); z-index: 20; min-height: 44px; box-shadow: 0 3px 12px var(--menu-shadow); }
+/* Let the browser anchor this button. Reapplying visualViewport offsets during
+   native iOS scrolling makes it chase transient offsets and snap back. */
+.shelf-chat-launcher { --chat-edge: 24px; position: fixed; right: var(--chat-edge); bottom: max(var(--chat-edge), env(safe-area-inset-bottom)); z-index: 20; min-height: 44px; box-shadow: 0 3px 12px var(--menu-shadow); }
 .shelf-chat-launcher[hidden] { display: none; }
 .shelf-chat { position: fixed; inset: auto 24px 24px auto; z-index: 30; width: 360px; max-width: calc(100vw - 32px); height: 460px; max-height: calc(100dvh - 48px); margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--surface); box-shadow: 0 8px 32px var(--dialog-shadow); overflow: hidden; }
 .shelf-chat[open] { display: flex; flex-direction: column; }
@@ -31,7 +33,7 @@
 .shelf-chat-error { margin: 0 0 10px; color: var(--danger); font-size: 12px; line-height: 1.6; }
 .shelf-app:has(.shelf-chat-launcher) .shelf-main { padding-bottom: 96px; }
 @media (max-width: 600px) {
-  .shelf-chat-launcher { right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); }
+  .shelf-chat-launcher { --chat-edge: 16px; }
   .shelf-chat { inset: var(--chat-top, 0px) 0 auto 0; width: 100%; max-width: none; height: var(--chat-height, 100dvh); max-height: none; border: 0; border-radius: 0; }
   .shelf-chat::backdrop { background: var(--paper); }
   .shelf-chat-header { padding-top: max(8px, env(safe-area-inset-top)); padding-left: max(20px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }

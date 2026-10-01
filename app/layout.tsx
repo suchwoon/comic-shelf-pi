@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import ThemeProvider from "@/components/ThemeProvider";
+import ViewportDiagnostics from "@/components/ViewportDiagnostics";
 import { THEME_INIT_SCRIPT } from "@/lib/client/theme";
 import "@fontsource-variable/noto-sans-kr";
 import "./globals.css";
@@ -15,6 +16,6 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <head>
       <script id="shelf-theme-init" dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
     </head>
-    <body><ThemeProvider>{children}</ThemeProvider></body>
+    <body><ThemeProvider>{children}<ViewportDiagnostics /></ThemeProvider></body>
   </html>;
 }

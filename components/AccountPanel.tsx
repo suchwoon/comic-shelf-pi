@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { CheckCircle2, CircleAlert, Copy, KeyRound, LoaderCircle, Plus, RotateCcw, X } from "lucide-react";
 import type { AccountInvitation, AccountUser, ManagedUser, SessionResponse } from "@/lib/types";
-import { isDialogBackdropClick } from "@/lib/client/dialog";
+import { isDialogBackdropClick, showModalDialog } from "@/lib/client/dialog";
 
 type CreatedInvitation = AccountInvitation & { link: string };
 
@@ -36,8 +36,7 @@ export default function AccountPanel({ user, onClose, onUnauthorized, onSession 
 
   useEffect(() => {
     const dialog = dialogRef.current;
-    dialog?.showModal();
-    return () => dialog?.close();
+    if (dialog) return showModalDialog(dialog);
   }, []);
 
   const request = useCallback(async <T,>(path: string, options?: RequestInit): Promise<T> => {

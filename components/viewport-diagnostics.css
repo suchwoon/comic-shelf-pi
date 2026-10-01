@@ -1,0 +1,11 @@
+.viewport-diagnostics { position: fixed; z-index: 1000; top: 160px; right: 12px; width: min(280px, calc(100vw - 24px)); max-height: calc(100dvh - 176px); overflow: auto; overscroll-behavior: contain; border: 1px solid #626262; border-radius: 8px; background: #242424; color: #ededed; box-shadow: 0 3px 16px #0005; font-size: 12px; line-height: 1.6; }
+.viewport-diagnostics-heading { display: flex; align-items: center; gap: 4px; padding: 4px; }
+.viewport-diagnostics button { min-height: 36px; padding: 6px 10px; border: 1px solid #626262; border-radius: 4px; background: #333; color: #fff; font: inherit; }
+.viewport-diagnostics-heading > button:first-child { flex: 1; text-align: left; }
+.viewport-diagnostics-heading > button:last-child { min-width: 36px; }
+.viewport-diagnostics-content { padding: 0 12px 12px; }
+.viewport-diagnostics-content p { margin: 8px 0; }
+.viewport-diagnostics-content textarea { display: block; width: 100%; height: 100px; margin-top: 8px; padding: 6px; border: 1px solid #737373; border-radius: 4px; background: #171717; color: #ededed; font: 16px/1.4 monospace; }
+.viewport-diagnostics-probe { position: fixed; left: 0; width: 1px; visibility: hidden; pointer-events: none; }
+.viewport-diagnostics-probe-bottom { bottom: 0; height: 1px; }
+.viewport-diagnostics-probe-dvh { top: 0; height: 100dvh; }

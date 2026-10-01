@@ -93,7 +93,7 @@
 .shelf-drop-overlay > div { color: var(--ink); }
 .shelf-drop-overlay h2 { margin: 20px 0 10px; font-size: 23px; font-weight: 500; letter-spacing: -.5px; }
 .shelf-drop-overlay p { margin: 0; color: var(--muted); font-size: 13px; }
-.shelf-dialog { width: min(420px, calc(100vw - 40px)); padding: 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); box-shadow: 0 16px 60px var(--dialog-shadow); }
+.shelf-dialog { width: min(420px, calc(100vw - 40px)); padding: 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); box-shadow: 0 16px 60px var(--dialog-shadow); overscroll-behavior: contain; }
 .shelf-dialog::backdrop { background: var(--backdrop); }
 .shelf-dialog form { position: relative; }
 .shelf-dialog-close { position: absolute; right: -12px; top: -12px; }

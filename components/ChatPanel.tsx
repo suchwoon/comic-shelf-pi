@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import { ArrowDown, ArrowUp, LoaderCircle, MessageCircle, X } from "lucide-react";
 import { CHAT_HISTORY_LIMIT, CHAT_MESSAGE_LIMIT } from "@/lib/types";
 import type { AccountUser, ChatMessage } from "@/lib/types";
+import { showModalDialog } from "@/lib/client/dialog";
 
 async function responseError(response: Response, fallback: string) {
   try {
@@ -66,11 +67,12 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
     if (!open) return;
     const dialog = dialogRef.current!;
     const mobile = window.matchMedia("(max-width: 600px)");
-    const previousOverflow = document.body.style.overflow;
+    let closeModal: (() => void) | undefined;
     const show = () => {
+      closeModal?.();
+      closeModal = undefined;
       dialog.close();
-      document.body.style.overflow = mobile.matches ? "hidden" : previousOverflow;
-      if (mobile.matches) dialog.showModal();
+      if (mobile.matches) closeModal = showModalDialog(dialog);
       else { dialog.show(); inputRef.current?.focus({ preventScroll: true }); }
       resizeInput();
       if (nearBottom.current && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
@@ -95,7 +97,7 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
       observer.disconnect();
       mobile.removeEventListener("change", show);
       document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
+      closeModal?.();
       dialog.close();
       launcherRef.current?.focus({ preventScroll: true });
     };

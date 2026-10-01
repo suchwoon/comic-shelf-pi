@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import type { Book, LibraryResponse, SessionResponse } from "@/lib/types";
 import { UploadError, uploadPdf } from "@/lib/client/upload";
-import { isDialogBackdropClick } from "@/lib/client/dialog";
+import { isDialogBackdropClick, showModalDialog } from "@/lib/client/dialog";
 import AccountPanel from "@/components/AccountPanel";
 import ThemeToggle from "@/components/ThemeToggle";
 import ChatPanel from "@/components/ChatPanel";
@@ -69,8 +69,7 @@ function BookDialog({ action, onClose, onSaved, onUnauthorized }: {
   const renaming = action.kind === "rename";
   useEffect(() => {
     const dialog = dialogRef.current;
-    dialog?.showModal();
-    return () => { dialog?.close(); };
+    if (dialog) return showModalDialog(dialog);
   }, []);
 
   async function submit(event: FormEvent) {

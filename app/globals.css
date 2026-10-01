@@ -2,6 +2,7 @@
 @import "../components/reader.css";
 @import "../components/account.css";
 @import "../components/chat.css";
+@import "../components/viewport-diagnostics.css";
 
 :root {
   color-scheme: light;
