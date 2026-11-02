@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DEFAULT_READING_DIRECTION, type Book } from "../types";
 import { normalizeSeriesTitle, parseSeriesFilename } from "../series-metadata";
+import { compareInstallments } from "../client/series";
 import { ApiError } from "./http";
 
 interface Store { db: DatabaseSync; root: string }
@@ -165,6 +166,15 @@ export function listBooks(userId?: string): Book[] {
       ORDER BY COALESCE(p.lastReadAt, b.createdAt) DESC`).all(userId) as unknown as Book[];
   }
   return store().db.prepare(`SELECT ${columns} FROM books b LEFT JOIN series s ON s.id = b.seriesId ORDER BY COALESCE(b.lastReadAt, b.createdAt) DESC`).all() as unknown as Book[];
+}
+
+export function listSeriesBooks(seriesId: string | null, userId: string): Book[] {
+  if (seriesId === null) return [];
+  ensureUserProgressTables();
+  const books = store().db.prepare(`SELECT ${userColumns} FROM books b LEFT JOIN series s ON s.id = b.seriesId
+    LEFT JOIN user_progress p ON p.bookId = b.id AND p.userId = ?
+    WHERE b.seriesId = ?`).all(userId, seriesId) as unknown as Book[];
+  return books.sort(compareInstallments);
 }
 
 export function getBook(id: string, userId?: string): Book {

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
-import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronLeft, ChevronRight, Columns2, LoaderCircle, Maximize, Minimize, MoveHorizontal, RotateCcw } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, LoaderCircle, Maximize, Minimize, MoveHorizontal, RotateCcw } from "lucide-react";
+import { installmentLabel } from "@/lib/client/series";
 import { ImagePageDocument, type PageDocument } from "@/lib/reader/page-document";
 import { DEFAULT_READING_DIRECTION, type Book, type ReadingDirection } from "@/lib/types";
 import { PdfPageCache } from "@/lib/reader/page-cache";
@@ -86,6 +87,7 @@ function useProgress(bookId: string) {
 export default function Reader({ bookId }: { bookId: string }) {
   const router = useRouter();
   const [book, setBook] = useState<Book | null>(null);
+  const [seriesBooks, setSeriesBooks] = useState<Book[]>([]);
   const [pageDocument, setPageDocument] = useState<PageDocument | null>(null);
   const [loadError, setLoadError] = useState("");
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -105,6 +107,8 @@ export default function Reader({ bookId }: { bookId: string }) {
   const [leaving, setLeaving] = useState(false);
   const [navigationError, setNavigationError] = useState("");
   const leavingRef = useRef(false);
+  const navigationTarget = useRef<{ href: string; completeVisibleSpread: boolean } | null>(null);
+  const endControlsShown = useRef(false);
   const [rendering, setRendering] = useState(true);
   const [showPageLoading, setShowPageLoading] = useState(false);
   const [renderError, setRenderError] = useState("");
@@ -127,13 +131,20 @@ export default function Reader({ bookId }: { bookId: string }) {
   const pageCache = useMemo(() => pageDocument ? new PdfPageCache(pageDocument) : null, [pageDocument]);
   const libraryHref = book?.seriesId ? `/?series=${encodeURIComponent(book.seriesId)}` : "/";
 
-  const backToLibrary = async () => {
+  const navigateTo = async (href: string, completeVisibleSpread = false) => {
     if (leavingRef.current) return;
+    navigationTarget.current = { href, completeVisibleSpread };
     leavingRef.current = true;
     setLeaving(true);
     setNavigationError("");
+    // A final spread can display the last page while its bookmark is the first
+    // page of that spread. Explicitly moving on completes the displayed book.
+    if (completeVisibleSpread && pageDocument && !rendering && !renderError
+      && displayedPages.current.includes(pageDocument.numPages)) {
+      change({ currentPage: pageDocument.numPages });
+    }
     if (await flush()) {
-      router.push(libraryHref);
+      router.push(href);
     } else {
       leavingRef.current = false;
       setLeaving(false);
@@ -253,6 +264,8 @@ export default function Reader({ bookId }: { bookId: string }) {
     setLoadError("");
     setPageDocument(null);
     setBook(null);
+    setSeriesBooks([]);
+    endControlsShown.current = false;
     initialReadMarked.current = false;
     setRenderedPage(null);
     setRenderedPages([]);
@@ -266,6 +279,8 @@ export default function Reader({ bookId }: { bookId: string }) {
         if (!active) return;
         const value = data.book as Book;
         setBook({ ...value, fit: "page" });
+        setSeriesBooks(Array.isArray(data.seriesBooks)
+          ? data.seriesBooks.filter((item: Book) => value.seriesId && item.seriesId === value.seriesId) : []);
         setDirection(value.direction);
         // Older books may have saved width-fit settings. The reader now always
         // fits a full page, and the first successful read persists that setting.
@@ -382,8 +397,10 @@ export default function Reader({ bookId }: { bookId: string }) {
   }, [page]);
 
   useEffect(() => {
-    setFullscreenAvailable(Boolean(document.fullscreenEnabled && rootRef.current?.requestFullscreen));
+    const target = rootRef.current?.closest<HTMLElement>("[data-reader-fullscreen]");
+    setFullscreenAvailable(Boolean(document.fullscreenEnabled && target?.requestFullscreen));
     const update = () => setFullscreen(Boolean(document.fullscreenElement));
+    update();
     document.addEventListener("fullscreenchange", update);
     return () => document.removeEventListener("fullscreenchange", update);
   }, []);
@@ -468,7 +485,7 @@ export default function Reader({ bookId }: { bookId: string }) {
     setFullscreenError("");
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
-      else await rootRef.current?.requestFullscreen();
+      else await rootRef.current?.closest<HTMLElement>("[data-reader-fullscreen]")?.requestFullscreen();
     } catch {
       setFullscreenError("Fullscreen is not available in this browser.");
     }
@@ -502,6 +519,25 @@ export default function Reader({ bookId }: { bookId: string }) {
   const atStart = (twoPages ? firstVisiblePage : page) <= 1;
   const atEnd = (twoPages ? lastVisiblePage : page) >= pageCount;
   const pageRange = renderedPages.length > 1 ? `${firstVisiblePage}–${lastVisiblePage}` : "";
+  const installmentIndex = seriesBooks.findIndex(item => item.id === bookId);
+  const hasSeriesNavigation = !!book?.seriesId && installmentIndex >= 0;
+  const nextInstallment = hasSeriesNavigation ? seriesBooks[installmentIndex + 1] : undefined;
+  const atSeriesEnd = hasSeriesNavigation && pageReady && !rendering && !bookError && !renderError
+    && renderedPage === page && renderedPages.includes(pageCount);
+  const nextLabel = nextInstallment?.installmentType === "chapter" ? "Next chapter"
+    : nextInstallment?.installmentType === "volume" ? "Next volume" : "Next installment";
+
+  useEffect(() => {
+    if (!hasSeriesNavigation || rendering || bookError || renderError || !renderedPages.length) return;
+    const reachedEnd = renderedPages.includes(pageCount);
+    if (reachedEnd && !endControlsShown.current) {
+      setControls(true);
+      setShowTouchHint(false);
+    }
+    // Resizing the final page or hiding controls does not reveal them again.
+    endControlsShown.current = reachedEnd;
+  }, [hasSeriesNavigation, rendering, bookError, renderError, renderedPages, pageCount]);
+
   const submitPage = () => {
     if (/^\d+$/.test(pageInput)) goToPage(Number(pageInput));
     else setPageInput(String(page));
@@ -554,16 +590,35 @@ export default function Reader({ bookId }: { bookId: string }) {
   return (
     <div className={`reader-root${touchNavigation ? " reader-touch" : ""}${controls ? "" : " reader-controls-hidden"}`} ref={rootRef}
       onPointerDownCapture={startTap} onPointerMoveCapture={moveTap} onPointerUpCapture={endTap} onPointerCancelCapture={cancelTap}>
-      <header className="reader-heading">
+      <header className={`reader-heading${hasSeriesNavigation ? " reader-heading-series" : ""}`}>
         <div className="reader-heading-book">
           <Link className="reader-back reader-floating" href={libraryHref} onClick={event => {
             if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
             event.preventDefault();
-            void backToLibrary();
+            void navigateTo(libraryHref, !!book?.seriesId);
           }} aria-label={book?.seriesId ? "Back to series" : "Back to library"} aria-busy={leaving}>
             {leaving ? <LoaderCircle className="reader-spin" size={18} /> : <ArrowLeft size={19} />}<span className="sr-only">{leaving ? "Saving…" : book?.seriesId ? "Series" : "Library"}</span>
           </Link>
-          <h1 className="reader-book-title reader-floating" title={book?.title}>{book?.title || "Opening book"}</h1>
+          {hasSeriesNavigation && seriesBooks.length > 1 ? (
+            <div className="reader-series-heading reader-floating" title={book?.title}>
+              <h1 className="sr-only">{book?.title}</h1>
+              <span className="reader-series-title" aria-hidden="true">{book?.seriesTitle}</span>
+              <div className="reader-installment-picker">
+                <select aria-label="Choose installment" value={bookId} disabled={!pageDocument || leaving || missing}
+                  onChange={event => {
+                    if (event.target.value !== bookId) void navigateTo(`/read/${encodeURIComponent(event.target.value)}`, true);
+                  }}>
+                  {seriesBooks.map(item => {
+                    const label = installmentLabel(item);
+                    const needsTitle = item.installmentNumber === null
+                      || seriesBooks.some(other => other.id !== item.id && installmentLabel(other) === label);
+                    return <option key={item.id} value={item.id}>{label}{needsTitle ? ` · ${item.title}` : ""}</option>;
+                  })}
+                </select>
+                <ChevronDown size={14} aria-hidden="true" />
+              </div>
+            </div>
+          ) : <h1 className="reader-book-title reader-floating" title={book?.title}>{book?.title || "Opening book"}</h1>}
         </div>
         <div className="reader-heading-actions reader-floating" role="group" aria-label="Reading controls">
           <button type="button" className="reader-icon-button reader-spread-toggle" onClick={toggleTwoPages}
@@ -623,6 +678,15 @@ export default function Reader({ bookId }: { bookId: string }) {
       </main>
 
       <footer className="reader-footer">
+        {atSeriesEnd && <button type="button" className="reader-series-next reader-floating" disabled={leaving || missing}
+          aria-label={nextInstallment ? `${nextLabel}: ${nextInstallment.title}` : "Back to series list"}
+          aria-busy={leaving}
+          onClick={() => void navigateTo(nextInstallment ? `/read/${encodeURIComponent(nextInstallment.id)}` : libraryHref, true)}>
+          {leaving && <LoaderCircle className="reader-spin" size={15} />}
+          <span>{nextInstallment ? nextLabel : "Back to series list"}</span>
+          {nextInstallment?.installmentNumber !== null && nextInstallment?.installmentNumber !== undefined
+            && <span className="reader-series-next-number">· {nextInstallment.installmentNumber}</span>}
+        </button>}
         {!touchNavigation && pageReady && showTouchHint && controls && <p className="reader-screen-hint" role="status">
           Click the page to hide controls. Press H to toggle.
         </p>}
@@ -654,7 +718,10 @@ export default function Reader({ bookId }: { bookId: string }) {
         </div>
       </footer>
       {fullscreenError && <div className="reader-toast" role="status"><span>{fullscreenError}</span><button type="button" onClick={() => setFullscreenError("")}>Dismiss</button></div>}
-      {navigationError && <div className="reader-toast" role="alert"><span>{navigationError}</span><button type="button" onClick={() => void backToLibrary()}>Try again</button></div>}
+      {navigationError && <div className="reader-toast" role="alert"><span>{navigationError}</span><button type="button" onClick={() => {
+        const target = navigationTarget.current;
+        void navigateTo(target?.href ?? libraryHref, target?.completeVisibleSpread);
+      }}>Try again</button></div>}
       <span className="sr-only" aria-live="polite" aria-atomic="true">{pageDocument && !rendering && !bookError && !renderError ? `${pageRange ? `Pages ${pageRange}` : `Page ${renderedPage}`} of ${pageCount}` : ""}</span>
     </div>
   );

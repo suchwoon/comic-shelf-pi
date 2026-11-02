@@ -1,6 +1,6 @@
 import { requireAdmin, requireAuth } from "@/lib/server/auth";
 import { errorResponse, json, readJson } from "@/lib/server/http";
-import { getBook, updateBookMetadata } from "@/lib/server/storage";
+import { getBook, listSeriesBooks, updateBookMetadata } from "@/lib/server/storage";
 import { deleteBook } from "@/lib/server/upload";
 
 export const runtime = "nodejs";
@@ -10,7 +10,8 @@ type Context = { params: Promise<{ id: string }> };
 export async function GET(request: Request, context: Context) {
   try {
     const user = requireAuth(request);
-    return json({ book: getBook((await context.params).id, user.id) });
+    const book = getBook((await context.params).id, user.id);
+    return json({ book, seriesBooks: listSeriesBooks(book.seriesId, user.id) });
   }
   catch (error) { return errorResponse(error); }
 }

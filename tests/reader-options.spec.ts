@@ -131,7 +131,7 @@ test("the fullscreen icon enters and exits fullscreen directly", async ({ page }
     test.skip(!await page.evaluate(() => document.fullscreenEnabled), "Fullscreen is unavailable in this browser");
     const heading = page.locator(".reader-heading");
     await heading.getByRole("button", { name: "Enter fullscreen", exact: true }).click();
-    await expect.poll(() => page.evaluate(() => document.fullscreenElement?.classList.contains("reader-root"))).toBe(true);
+    await expect.poll(() => page.evaluate(() => document.fullscreenElement?.contains(document.querySelector(".reader-root")))).toBe(true);
     await expect(heading).toBeVisible();
     await heading.getByRole("button", { name: "Exit fullscreen", exact: true }).click();
     await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true);
