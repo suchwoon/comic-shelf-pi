@@ -125,6 +125,7 @@ export default function Reader({ bookId }: { bookId: string }) {
   const tapClick = useRef<{ target: HTMLButtonElement; time: number } | null>(null);
   const { latest, change, flush, status: saveStatus, missing } = useProgress(bookId);
   const pageCache = useMemo(() => pageDocument ? new PdfPageCache(pageDocument) : null, [pageDocument]);
+  const libraryHref = book?.seriesId ? `/?series=${encodeURIComponent(book.seriesId)}` : "/";
 
   const backToLibrary = async () => {
     if (leavingRef.current) return;
@@ -132,7 +133,7 @@ export default function Reader({ bookId }: { bookId: string }) {
     setLeaving(true);
     setNavigationError("");
     if (await flush()) {
-      router.push("/");
+      router.push(libraryHref);
     } else {
       leavingRef.current = false;
       setLeaving(false);
@@ -555,12 +556,12 @@ export default function Reader({ bookId }: { bookId: string }) {
       onPointerDownCapture={startTap} onPointerMoveCapture={moveTap} onPointerUpCapture={endTap} onPointerCancelCapture={cancelTap}>
       <header className="reader-heading">
         <div className="reader-heading-book">
-          <Link className="reader-back reader-floating" href="/" onClick={event => {
+          <Link className="reader-back reader-floating" href={libraryHref} onClick={event => {
             if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
             event.preventDefault();
             void backToLibrary();
-          }} aria-label="Back to library" aria-busy={leaving}>
-            {leaving ? <LoaderCircle className="reader-spin" size={18} /> : <ArrowLeft size={19} />}<span className="sr-only">{leaving ? "Saving…" : "Library"}</span>
+          }} aria-label={book?.seriesId ? "Back to series" : "Back to library"} aria-busy={leaving}>
+            {leaving ? <LoaderCircle className="reader-spin" size={18} /> : <ArrowLeft size={19} />}<span className="sr-only">{leaving ? "Saving…" : book?.seriesId ? "Series" : "Library"}</span>
           </Link>
           <h1 className="reader-book-title reader-floating" title={book?.title}>{book?.title || "Opening book"}</h1>
         </div>

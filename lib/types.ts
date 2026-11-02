@@ -1,11 +1,16 @@
 export type ReadingDirection = "ltr" | "rtl";
 export const DEFAULT_READING_DIRECTION: ReadingDirection = "rtl";
 export type FitMode = "page" | "width";
+export type InstallmentType = "volume" | "chapter";
 
 export interface Book {
   id: string;
   title: string;
   originalName: string;
+  seriesId: string | null;
+  seriesTitle: string | null;
+  installmentType: InstallmentType | null;
+  installmentNumber: number | null;
   size: number;
   pageCount: number;
   currentPage: number;

@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, MouseEvent, ReactNode } from "react";
 import {
-  ArrowDownToLine, ArrowRight, BookOpen, CheckCircle2, ChevronDown,
+  ArrowDownToLine, ArrowLeft, ArrowRight, BookOpen, CheckCircle2, ChevronDown, Layers,
   CircleAlert, CloudUpload, Ellipsis, FileText, LoaderCircle,
   LockKeyhole, LogOut, Pencil, Plus, RotateCcw, Search, Trash2, UserRound, X,
 } from "lucide-react";
@@ -14,6 +15,8 @@ import { isDialogBackdropClick, showModalDialog } from "@/lib/client/dialog";
 import AccountPanel from "@/components/AccountPanel";
 import ThemeToggle from "@/components/ThemeToggle";
 import ChatPanel from "@/components/ChatPanel";
+import SeriesDialog from "@/components/SeriesDialog";
+import { installmentCount, installmentLabel, isCompleted, seriesReadingTarget, shelfEntries } from "@/lib/client/series";
 
 type UploadStatus = "queued" | "uploading" | "checking" | "done" | "error";
 interface UploadItem {
@@ -143,6 +146,13 @@ function UploadList({ uploads, onRetry, onClear }: { uploads: UploadItem[]; onRe
 }
 
 export default function Bookshelf() {
+  return <Suspense fallback={<div className="shelf-loading" role="status">Loading library</div>}><BookshelfContent /></Suspense>;
+}
+
+function BookshelfContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const selectedSeriesId = searchParams.get("series");
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [sessionError, setSessionError] = useState("");
   const [books, setBooks] = useState<Book[]>([]);
@@ -153,6 +163,7 @@ export default function Bookshelf() {
   const [sort, setSort] = useState("recent");
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [action, setAction] = useState<BookAction | null>(null);
+  const [seriesBook, setSeriesBook] = useState<Book | null>(null);
   const [notice, setNotice] = useState("");
   const [dragging, setDragging] = useState(false);
   const [username, setUsername] = useState("");
@@ -167,6 +178,7 @@ export default function Bookshelf() {
   const activeUpload = useRef<AbortController | null>(null);
   const nextUploadId = useRef(0);
   const clearedHistoryBook = useRef<string | null>(null);
+  const editedSeriesBook = useRef<string | null>(null);
 
   useEffect(() => {
     if (action || !clearedHistoryBook.current) return;
@@ -184,6 +196,7 @@ export default function Bookshelf() {
     setUploads([]);
     setLoading(false);
     setAction(null);
+    setSeriesBook(null);
     setAccountOpen(false);
     setDragging(false);
   }, []);
@@ -202,8 +215,8 @@ export default function Bookshelf() {
     }
   }, []);
 
-  const loadBooks = useCallback(async () => {
-    setLoading(true);
+  const loadBooks = useCallback(async (background = false) => {
+    if (!background) setLoading(true);
     setLoadError("");
     try {
       const response = await fetch("/api/books", { cache: "no-store" });
@@ -214,7 +227,7 @@ export default function Bookshelf() {
       setMaxUploadBytes(data.maxUploadBytes);
     } catch (cause) {
       setLoadError(cause instanceof Error ? cause.message : "Check your connection to the server and try again.");
-    } finally { setLoading(false); }
+    } finally { if (!background) setLoading(false); }
   }, [requireLogin]);
 
   useEffect(() => { void loadSession(); }, [loadSession]);
@@ -250,11 +263,13 @@ export default function Bookshelf() {
     void uploadPdf(next.file, {
       signal: controller.signal,
       onProgress: (progress, checking) => updateUpload(next.id, { progress, status: checking ? "checking" : "uploading" }),
-    }).then(book => {
-      processing.current = false;
+    }).then(async book => {
       if (!controller.signal.aborted) {
         setBooks(previous => [book, ...previous.filter(existing => existing.id !== book.id)]);
-        updateUpload(next.id, { status: "done", progress: 100 });
+        // A matching upload can also classify an earlier unnumbered series candidate.
+        await loadBooks(true);
+        processing.current = false;
+        if (!controller.signal.aborted) updateUpload(next.id, { status: "done", progress: 100 });
       }
     }).catch(cause => {
       processing.current = false;
@@ -265,7 +280,7 @@ export default function Bookshelf() {
       processing.current = false;
       activeUpload.current = null;
     });
-  }, [uploads, session?.authenticated, session?.user?.role, loading, updateUpload, requireLogin]);
+  }, [uploads, session?.authenticated, session?.user?.role, loading, updateUpload, requireLogin, loadBooks]);
 
   const pendingCount = uploads.filter(item => ["queued", "uploading", "checking"].includes(item.status)).length;
   useEffect(() => {
@@ -313,15 +328,40 @@ export default function Bookshelf() {
     finally { setLogoutBusy(false); }
   }
 
-  const filteredBooks = useMemo(() => {
-    const search = query.trim().toLocaleLowerCase("en");
-    return books.filter(book => book.title.toLocaleLowerCase("en").includes(search)).sort((a, b) => {
-      if (sort === "title") return a.title.localeCompare(b.title, "en", { numeric: true, sensitivity: "base" });
-      if (sort === "added") return Date.parse(b.createdAt) - Date.parse(a.createdAt);
-      return (b.lastReadAt ? Date.parse(b.lastReadAt) : 0) - (a.lastReadAt ? Date.parse(a.lastReadAt) : 0) || Date.parse(b.createdAt) - Date.parse(a.createdAt);
-    });
-  }, [books, query, sort]);
+  const entries = useMemo(() => shelfEntries(books), [books]);
+  const selectedSeries = entries.find(entry => entry.series && entry.id === selectedSeriesId);
+  const seriesNames = useMemo(() => entries.filter(entry => entry.series).map(entry => entry.title).sort((a, b) => a.localeCompare(b)), [entries]);
+  const search = query.trim().toLocaleLowerCase("en");
+  const visibleEntries = useMemo(() => entries.filter(entry => entry.title.toLocaleLowerCase("en").includes(search)
+    || entry.books.some(book => book.title.toLocaleLowerCase("en").includes(search))).sort((a, b) => {
+    if (sort === "title") return a.title.localeCompare(b.title, "en", { numeric: true, sensitivity: "base" });
+    const latest = (entry: typeof a, key: "createdAt" | "lastReadAt") => Math.max(...entry.books.map(book => book[key] ? Date.parse(book[key]!) : 0));
+    return (sort === "recent" ? latest(b, "lastReadAt") - latest(a, "lastReadAt") : 0)
+      || latest(b, "createdAt") - latest(a, "createdAt")
+      || a.title.localeCompare(b.title, "en", { numeric: true });
+  }), [entries, search, sort]);
+  const filteredBooks = selectedSeries?.books.filter(book => book.title.toLocaleLowerCase("en").includes(search)
+    || installmentLabel(book).toLocaleLowerCase("en").includes(search)) || [];
   const recent = useMemo(() => [...books].filter(book => book.lastReadAt !== null).sort((a, b) => Date.parse(b.lastReadAt!) - Date.parse(a.lastReadAt!))[0], [books]);
+  const readingTarget = selectedSeries ? seriesReadingTarget(selectedSeries.books) : recent ? { book: recent, label: "Continue reading" } : null;
+  const resultCount = selectedSeries ? filteredBooks.length : visibleEntries.length;
+
+  useEffect(() => { setQuery(""); }, [selectedSeriesId]);
+  useEffect(() => {
+    if (selectedSeriesId && !selectedSeries && !loading && !loadError && session?.authenticated) router.replace("/", { scroll: false });
+  }, [selectedSeriesId, selectedSeries, loading, loadError, session?.authenticated, router]);
+  useEffect(() => {
+    if (seriesBook || !editedSeriesBook.current) return;
+    const book = books.find(item => item.id === editedSeriesBook.current);
+    if (book) {
+      // Saving can replace the originating card with a series or move it out
+      // of this view. Return focus to a visible destination after modal cleanup.
+      const bookLink = document.querySelector<HTMLAnchorElement>(`.shelf-book-link[href="/read/${book.id}"]`);
+      const seriesLink = book.seriesId ? document.querySelector<HTMLAnchorElement>(`.shelf-book-link[href="/?series=${book.seriesId}"]`) : null;
+      (bookLink || seriesLink || document.getElementById("shelf-collection-title"))?.focus();
+    }
+    editedSeriesBook.current = null;
+  }, [seriesBook, books]);
   const totalSize = books.reduce((sum, book) => sum + book.size, 0);
   const isAdmin = !!session?.authenticated && session.user?.role === "admin";
   const canUpload = isAdmin && !loading && !loadError;
@@ -334,6 +374,20 @@ export default function Bookshelf() {
     menu?.removeAttribute("open");
     menu?.querySelector("summary")?.focus();
     setAction({ kind, book });
+  }
+
+  function openSeriesEditor(book: Book, target: HTMLButtonElement) {
+    if (!isAdmin) return;
+    const menu = target.closest("details");
+    menu?.removeAttribute("open");
+    menu?.querySelector("summary")?.focus();
+    setSeriesBook(book);
+  }
+
+  function saveSeries(book: Book) {
+    editedSeriesBook.current = book.id;
+    setBooks(previous => previous.map(existing => existing.id === book.id ? book : existing));
+    setNotice(book.seriesId ? "Series updated." : "Book shown on its own.");
   }
 
   function saveBookAction(book: Book | null) {
@@ -387,24 +441,60 @@ export default function Bookshelf() {
       </section>
     );
   } else {
+    function renderBook(book: Book) {
+      const percentage = Math.min(100, Math.round(book.currentPage / Math.max(1, book.pageCount) * 100));
+      return (
+        <article key={book.id} className="shelf-book-card">
+          <Link className="shelf-book-link" href={`/read/${book.id}`} onClick={openReader} aria-label={`Read ${book.title}`}>
+            <BookCover book={book} />
+            {selectedSeries && <span className="shelf-installment-label">{installmentLabel(book)}</span>}
+            <h3 title={book.title}>{book.title}</h3>
+          </Link>
+          {selectedSeries && <p className={`shelf-reading-status${isCompleted(book) ? " shelf-reading-completed" : ""}`}>
+            {isCompleted(book) ? <><CheckCircle2 size={12} />Completed</> : book.lastReadAt ? `In progress · ${percentage}%` : "Unread"}
+          </p>}
+          <div className="shelf-book-meta">
+            <span>{book.pageCount.toLocaleString("en-US")} {book.pageCount === 1 ? "page" : "pages"}{!selectedSeries && book.lastReadAt && <> · {percentage}% read</>}</span>
+            <div className="shelf-book-tools">{isAdmin && <a className="shelf-icon-button" href={`/api/books/${book.id}/file`} download={book.originalName} aria-label={`Download ${book.title}`} title="Download PDF"><ArrowDownToLine size={15} /></a>}
+            {(isAdmin || book.lastReadAt) && <details className="shelf-book-menu">
+              <summary className="shelf-icon-button" aria-label={isAdmin ? `Manage ${book.title}` : `Reading options for ${book.title}`}><Ellipsis size={18} /></summary>
+              <div className="shelf-book-menu-options">
+                {book.lastReadAt && <button type="button" onClick={event => openAction("clearHistory", book, event.currentTarget)}><RotateCcw size={14} />Clear history</button>}
+                {isAdmin && <>
+                  <button type="button" onClick={event => openAction("rename", book, event.currentTarget)}><Pencil size={14} />Rename</button>
+                  <button type="button" onClick={event => openSeriesEditor(book, event.currentTarget)}><Layers size={14} />Edit series</button>
+                  <button type="button" className="shelf-menu-danger" onClick={event => openAction("delete", book, event.currentTarget)}><Trash2 size={14} />Delete book</button>
+                </>}
+              </div>
+            </details>}</div>
+          </div>
+          {book.lastReadAt && <div className="shelf-book-reading-track" aria-hidden="true"><span style={{ width: `${percentage}%` }} /></div>}
+        </article>
+      );
+    }
+
     content = <>
-      <section className="shelf-library-header">
+      {selectedSeries && <Link href="/" className="shelf-back-link"><ArrowLeft size={15} />Back to library</Link>}
+      <section className={`shelf-library-header${selectedSeries ? " shelf-series-header" : ""}`}>
         <div className="shelf-library-heading">
-          <h1 id="shelf-collection-title">Library</h1>
-          <p>{books.length} {books.length === 1 ? "book" : "books"}{books.length > 0 && <> · {formatBytes(totalSize)}</>}</p>
+          {selectedSeries && <span className="shelf-series-eyebrow">Series</span>}
+          <h1 id="shelf-collection-title" tabIndex={-1}>{selectedSeries?.title || "Library"}</h1>
+          <p>{selectedSeries ? <>{installmentCount(selectedSeries.books)} · {selectedSeries.books.filter(isCompleted).length} completed</>
+            : <>{entries.filter(entry => entry.series).length > 0 && <>{entries.filter(entry => entry.series).length} series · </>}{books.length} {books.length === 1 ? "book" : "books"}{books.length > 0 && <> · {formatBytes(totalSize)}</>}</>}</p>
         </div>
-        {recent && !loading && (
-          <Link href={`/read/${recent.id}`} onClick={openReader} className="shelf-continue" aria-label={`Continue reading ${recent.title}`}>
-            <BookCover key={recent.id} book={recent} small />
-            <div className="shelf-continue-copy"><span>Continue reading</span><h2 title={recent.title}>{recent.title}</h2><p>Page {recent.currentPage} of {recent.pageCount}</p></div>
+        {readingTarget && !loading && (
+          <Link href={`/read/${readingTarget.book.id}`} onClick={openReader} className="shelf-continue" aria-label={`${readingTarget.label} ${readingTarget.book.title}`}>
+            <BookCover key={readingTarget.book.id} book={readingTarget.book} small />
+            <div className="shelf-continue-copy"><span>{readingTarget.label}</span><h2 title={readingTarget.book.title}>{readingTarget.book.title}</h2><p>{selectedSeries && <>{installmentLabel(readingTarget.book)} · </>}Page {readingTarget.book.currentPage} of {readingTarget.book.pageCount}</p></div>
             <ArrowRight size={17} />
           </Link>
         )}
       </section>
       <section className="shelf-collection" aria-labelledby="shelf-collection-title">
         <div className="shelf-collection-bar">
-          <label className="shelf-search"><Search size={16} /><span className="sr-only">Search books</span><input type="search" placeholder="Search books" value={query} onChange={event => setQuery(event.target.value)} disabled={!session?.authenticated || loading} /></label>
-          <label className="shelf-sort"><span className="sr-only">Sort books</span><select value={sort} onChange={event => setSort(event.target.value)}><option value="recent">Recently read</option><option value="added">Recently added</option><option value="title">Title</option></select><ChevronDown size={14} /></label>
+          <label className="shelf-search"><Search size={16} /><span className="sr-only">Search books</span><input type="search" placeholder={selectedSeries ? "Search this series" : "Search books or series"} value={query} onChange={event => setQuery(event.target.value)} disabled={!session?.authenticated || loading} /></label>
+          {selectedSeries ? <span className="shelf-order-note">Number order</span>
+            : <label className="shelf-sort"><span className="sr-only">Sort books</span><select value={sort} onChange={event => setSort(event.target.value)}><option value="recent">Recently read</option><option value="added">Recently added</option><option value="title">Title</option></select><ChevronDown size={14} /></label>}
         </div>
         {isAdmin && uploads.length > 0 && <UploadList uploads={uploads} onRetry={id => updateUpload(id, { status: "queued", progress: 0, error: undefined })} onClear={() => setUploads(previous => previous.filter(item => !["done", "error"].includes(item.status)))} />}
         {loading || !session ? (
@@ -419,30 +509,23 @@ export default function Bookshelf() {
             {isAdmin && <><button type="button" className="shelf-button shelf-button-primary" onClick={pickFiles} disabled={!canUpload}><Plus size={16} />Upload PDF</button>
             <span className="shelf-upload-hint">Or drop your files here{maxUploadBytes > 0 && <> · {formatBytes(maxUploadBytes)} per file</>}</span></>}
           </div>
-        ) : filteredBooks.length === 0 ? (
+        ) : resultCount === 0 ? (
           <div className="shelf-no-results"><Search size={28} strokeWidth={1.4} /><h2>No books found</h2><p>Try a different title.</p><button className="shelf-button shelf-button-light" onClick={() => setQuery("")}>Clear search</button></div>
         ) : <>
-          <div className="shelf-book-grid">{filteredBooks.map(book => {
-            const percentage = Math.min(100, Math.round(book.currentPage / Math.max(1, book.pageCount) * 100));
-            return (
-              <article key={book.id} className="shelf-book-card">
-                <Link className="shelf-book-link" href={`/read/${book.id}`} onClick={openReader} aria-label={`Read ${book.title}`}><BookCover book={book} /><h3 title={book.title}>{book.title}</h3></Link>
-                <div className="shelf-book-meta">
-                  <span>{book.pageCount.toLocaleString("en-US")} {book.pageCount === 1 ? "page" : "pages"}{book.lastReadAt && <> · {percentage}% read</>}</span>
-                  <div className="shelf-book-tools">{isAdmin && <a className="shelf-icon-button" href={`/api/books/${book.id}/file`} download={book.originalName} aria-label={`Download ${book.title}`} title="Download PDF"><ArrowDownToLine size={15} /></a>}
-                  {(isAdmin || book.lastReadAt) && <details className="shelf-book-menu">
-                    <summary className="shelf-icon-button" aria-label={isAdmin ? `Manage ${book.title}` : `Reading options for ${book.title}`}><Ellipsis size={18} /></summary>
-                    <div className="shelf-book-menu-options">
-                      {book.lastReadAt && <button type="button" onClick={event => openAction("clearHistory", book, event.currentTarget)}><RotateCcw size={14} />Clear history</button>}
-                      {isAdmin && <><button type="button" onClick={event => openAction("rename", book, event.currentTarget)}><Pencil size={14} />Rename</button><button type="button" className="shelf-menu-danger" onClick={event => openAction("delete", book, event.currentTarget)}><Trash2 size={14} />Delete book</button></>}
-                    </div>
-                  </details>}</div>
-                </div>
-                {book.lastReadAt && <div className="shelf-book-reading-track" aria-hidden="true"><span style={{ width: `${percentage}%` }} /></div>}
-              </article>
-            );
+          <div className="shelf-book-grid">{selectedSeries ? filteredBooks.map(renderBook) : visibleEntries.map(entry => {
+            if (!entry.series) return renderBook(entry.books[0]);
+            const completed = entry.books.filter(isCompleted).length;
+            const latestRead = [...entry.books].filter(book => book.lastReadAt).sort((a, b) => Date.parse(b.lastReadAt!) - Date.parse(a.lastReadAt!))[0];
+            return <article key={`series:${entry.id}`} className="shelf-book-card shelf-series-card">
+              <Link className="shelf-book-link" href={`/?series=${entry.id}`} aria-label={`Open series ${entry.title}`}>
+                <div className="shelf-series-cover"><BookCover book={entry.books[0]} /><span className="shelf-series-badge"><Layers size={12} />Series</span></div>
+                <h3 title={entry.title}>{entry.title}</h3>
+              </Link>
+              <div className="shelf-book-meta"><span>{installmentCount(entry.books)}</span><ArrowRight size={14} aria-hidden="true" /></div>
+              <p className="shelf-series-progress">{latestRead ? completed === entry.books.length ? "All completed" : `${completed} completed · ${installmentLabel(latestRead)}` : "Not started"}</p>
+            </article>;
           })}</div>
-          <div className="shelf-collection-bottom"><span>{query.trim() ? `${filteredBooks.length} ${filteredBooks.length === 1 ? "result" : "results"}` : isAdmin ? "Drop PDF files anywhere to add them." : "Your reading progress is saved to your account."}</span>{isAdmin && maxUploadBytes > 0 && <span>{formatBytes(maxUploadBytes)} per file</span>}</div>
+          <div className="shelf-collection-bottom"><span>{query.trim() ? `${resultCount} ${resultCount === 1 ? "result" : "results"}` : isAdmin ? "Drop PDF files anywhere to add them." : "Your reading progress is saved to your account."}</span>{isAdmin && maxUploadBytes > 0 && <span>{formatBytes(maxUploadBytes)} per file</span>}</div>
         </>}
       </section>
     </>;
@@ -468,6 +551,7 @@ export default function Bookshelf() {
       {session?.authenticated && session.user && <ChatPanel key={session.user.id} user={session.user} onUnauthorized={requireLogin} />}
       {dragging && <div className="shelf-drop-overlay" aria-hidden="true"><div><ArrowDownToLine size={32} strokeWidth={1.4} /><h2>Drop PDFs to upload</h2><p>Add files to your library.</p></div></div>}
       {session?.authenticated && action && (isAdmin || action.kind === "clearHistory") && <BookDialog key={`${action.kind}-${action.book.id}`} action={action} onClose={() => setAction(null)} onUnauthorized={requireLogin} onSaved={saveBookAction} />}
+      {session?.authenticated && isAdmin && seriesBook && <SeriesDialog key={seriesBook.id} book={seriesBook} seriesNames={seriesNames} onClose={() => setSeriesBook(null)} onUnauthorized={requireLogin} onSaved={saveSeries} />}
       {accountOpen && session?.user && <AccountPanel user={session.user} onClose={() => setAccountOpen(false)} onUnauthorized={requireLogin} onSession={setSession} />}
       {notice && <div className="shelf-toast" role="status"><CheckCircle2 size={17} /><span>{notice}</span><button className="shelf-icon-button" type="button" aria-label="Dismiss notification" onClick={() => setNotice("")}><X size={16} /></button></div>}
     </div>

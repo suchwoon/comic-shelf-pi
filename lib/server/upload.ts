@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { DEFAULT_READING_DIRECTION, type Book } from "../types";
 import { ApiError } from "./http";
-import { bookFile, coverFile, getBook, maxUploadBytes, store } from "./storage";
+import { bookFile, classifyImportedBooks, coverFile, getBook, maxUploadBytes, store } from "./storage";
 import { deletePageImages } from "./page-images";
 
 const inspectionState = globalThis as typeof globalThis & { __comicInspecting?: boolean };
@@ -115,9 +115,18 @@ export async function saveUpload(request: Request): Promise<Book> {
     await rename(temporaryCover, destinationCover);
     // Write the preference explicitly because existing databases may still
     // have the previous table default. Saved book preferences stay untouched.
-    store().db.prepare(`INSERT INTO books (id, title, originalName, size, pageCount, direction, createdAt, sha256)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, originalName.replace(/\.pdf$/i, "").slice(0, 200) || "Untitled book", originalName, size, pageCount, DEFAULT_READING_DIRECTION, new Date().toISOString(), sha256);
+    const { db } = store();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare(`INSERT INTO books (id, title, originalName, size, pageCount, direction, createdAt, sha256)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, originalName.replace(/\.pdf$/i, "").slice(0, 200) || "Untitled book", originalName, size, pageCount, DEFAULT_READING_DIRECTION, new Date().toISOString(), sha256);
+      classifyImportedBooks(db);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
     committed = true;
     return getBook(id);
   } catch (error) {

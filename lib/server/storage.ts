@@ -1,7 +1,9 @@
 import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DEFAULT_READING_DIRECTION, type Book } from "../types";
+import { normalizeSeriesTitle, parseSeriesFilename } from "../series-metadata";
 import { ApiError } from "./http";
 
 interface Store { db: DatabaseSync; root: string }
@@ -43,13 +45,83 @@ export function store(): Store {
       PRIMARY KEY (bookId, writerId)
     );
   `);
+  try { migrateSeriesMetadata(db); }
+  catch (error) { db.close(); throw error; }
   return state.__comicStore = { root, db };
 }
 
-const columns = "id, title, originalName, size, pageCount, currentPage, direction, fit, createdAt, lastReadAt";
+const seriesColumns = "b.seriesId, s.title AS seriesTitle, b.installmentType, b.installmentNumber";
+const columns = `b.id, b.title, b.originalName, b.size, b.pageCount, b.currentPage, b.direction, b.fit, b.createdAt, b.lastReadAt, ${seriesColumns}`;
 const userColumns = `b.id, b.title, b.originalName, b.size, b.pageCount, b.createdAt,
   COALESCE(p.currentPage, 1) AS currentPage, COALESCE(p.direction, '${DEFAULT_READING_DIRECTION}') AS direction,
-  COALESCE(p.fit, 'page') AS fit, p.lastReadAt`;
+  COALESCE(p.fit, 'page') AS fit, p.lastReadAt, ${seriesColumns}`;
+
+function ensureSeries(db: DatabaseSync, title: string): string {
+  const normalizedTitle = normalizeSeriesTitle(title);
+  const existing = db.prepare("SELECT id FROM series WHERE normalizedTitle = ?").get(normalizedTitle) as { id: string } | undefined;
+  if (existing) return existing.id;
+  const id = randomUUID();
+  db.prepare("INSERT INTO series (id, title, normalizedTitle) VALUES (?, ?, ?)").run(id, title.trim(), normalizedTitle);
+  return id;
+}
+
+function classifyPendingBooks(db: DatabaseSync) {
+  const existing = db.prepare("SELECT id, normalizedTitle FROM series").all() as unknown as Array<{ id: string; normalizedTitle: string }>;
+  const known = new Map(existing.map(series => [series.normalizedTitle, series.id]));
+  const books = db.prepare("SELECT id, title FROM books WHERE seriesId IS NULL AND seriesMetadataManual = 0").all() as unknown as Array<{ id: string; title: string }>;
+  const pending = books.flatMap(book => {
+    const candidate = parseSeriesFilename(book.title);
+    return candidate ? [{ id: book.id, candidate }] : [];
+  });
+  const numbers = new Map<string, Set<number>>();
+  for (const { candidate } of pending) {
+    const key = normalizeSeriesTitle(candidate.seriesTitle);
+    const values = numbers.get(key) || new Set<number>();
+    values.add(candidate.installmentNumber);
+    numbers.set(key, values);
+    if (candidate.explicit && !known.has(key)) known.set(key, ensureSeries(db, candidate.seriesTitle));
+  }
+  const update = db.prepare("UPDATE books SET seriesId = ?, installmentType = ?, installmentNumber = ? WHERE id = ?");
+  for (const { id, candidate } of pending) {
+    const key = normalizeSeriesTitle(candidate.seriesTitle);
+    if (!known.has(key) && (numbers.get(key)?.size || 0) < 2) continue;
+    const seriesId = known.get(key) || ensureSeries(db, candidate.seriesTitle);
+    known.set(key, seriesId);
+    update.run(seriesId, candidate.installmentType, candidate.installmentNumber, id);
+  }
+}
+
+function migrateSeriesMetadata(db: DatabaseSync) {
+  // Additive migration: book identities, files, titles and reading state remain intact.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS series (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        normalizedTitle TEXT NOT NULL UNIQUE
+      )`);
+    if (!db.prepare("SELECT name FROM schema_migrations WHERE name = 'series-metadata-v1'").get()) {
+      const names = new Set((db.prepare("PRAGMA table_info(books)").all() as unknown as Array<{ name: string }>).map(column => column.name));
+      if (!names.has("seriesId")) db.exec("ALTER TABLE books ADD COLUMN seriesId TEXT REFERENCES series(id) ON DELETE SET NULL");
+      if (!names.has("installmentType")) db.exec("ALTER TABLE books ADD COLUMN installmentType TEXT CHECK (installmentType IN ('volume', 'chapter'))");
+      if (!names.has("installmentNumber")) db.exec("ALTER TABLE books ADD COLUMN installmentNumber REAL CHECK (installmentNumber >= 0)");
+      if (!names.has("seriesMetadataManual")) db.exec("ALTER TABLE books ADD COLUMN seriesMetadataManual INTEGER NOT NULL DEFAULT 0 CHECK (seriesMetadataManual IN (0, 1))");
+      db.exec("CREATE INDEX IF NOT EXISTS books_series ON books(seriesId)");
+      classifyPendingBooks(db);
+      db.prepare("INSERT INTO schema_migrations (name) VALUES ('series-metadata-v1')").run();
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+/** Call in the new book's insertion transaction, after the row is present. */
+export function classifyImportedBooks(db: DatabaseSync) {
+  classifyPendingBooks(db);
+}
 
 function ensureUserProgressTables() {
   // Account setup creates users first. Keep these tables lazy so low-level
@@ -88,11 +160,11 @@ export function migrateLegacyProgress(userId: string) {
 export function listBooks(userId?: string): Book[] {
   if (userId !== undefined) {
     ensureUserProgressTables();
-    return store().db.prepare(`SELECT ${userColumns} FROM books b
+    return store().db.prepare(`SELECT ${userColumns} FROM books b LEFT JOIN series s ON s.id = b.seriesId
       LEFT JOIN user_progress p ON p.bookId = b.id AND p.userId = ?
       ORDER BY COALESCE(p.lastReadAt, b.createdAt) DESC`).all(userId) as unknown as Book[];
   }
-  return store().db.prepare(`SELECT ${columns} FROM books ORDER BY COALESCE(lastReadAt, createdAt) DESC`).all() as unknown as Book[];
+  return store().db.prepare(`SELECT ${columns} FROM books b LEFT JOIN series s ON s.id = b.seriesId ORDER BY COALESCE(b.lastReadAt, b.createdAt) DESC`).all() as unknown as Book[];
 }
 
 export function getBook(id: string, userId?: string): Book {
@@ -101,8 +173,8 @@ export function getBook(id: string, userId?: string): Book {
   }
   if (userId !== undefined) ensureUserProgressTables();
   const book = (userId === undefined
-    ? store().db.prepare(`SELECT ${columns} FROM books WHERE id = ?`).get(id)
-    : store().db.prepare(`SELECT ${userColumns} FROM books b
+    ? store().db.prepare(`SELECT ${columns} FROM books b LEFT JOIN series s ON s.id = b.seriesId WHERE b.id = ?`).get(id)
+    : store().db.prepare(`SELECT ${userColumns} FROM books b LEFT JOIN series s ON s.id = b.seriesId
       LEFT JOIN user_progress p ON p.bookId = b.id AND p.userId = ? WHERE b.id = ?`).get(userId, id)) as unknown as Book | undefined;
   if (!book) throw new ApiError(404, "Book not found.");
   return book;
@@ -121,6 +193,47 @@ export function validateTitle(title: unknown): string {
     throw new ApiError(400, "Enter a title between 1 and 200 characters.");
   }
   return title.trim();
+}
+
+export function updateBookMetadata(id: string, input: Record<string, unknown>, userId?: string): Book {
+  const keys = Object.keys(input);
+  if (!keys.length || keys.some(key => !["title", "seriesTitle", "installmentType", "installmentNumber"].includes(key))) {
+    throw new ApiError(400, "The book metadata update is invalid.");
+  }
+  const title = "title" in input ? validateTitle(input.title) : undefined;
+  const seriesTitle = "seriesTitle" in input ? (input.seriesTitle === null ? null : validateTitle(input.seriesTitle)) : undefined;
+  if ("installmentType" in input && input.installmentType !== null && input.installmentType !== "volume" && input.installmentType !== "chapter") {
+    throw new ApiError(400, "Choose volumes or chapters for the series.");
+  }
+  if ("installmentNumber" in input && input.installmentNumber !== null && (typeof input.installmentNumber !== "number"
+    || !Number.isFinite(input.installmentNumber) || input.installmentNumber < 0 || input.installmentNumber > Number.MAX_SAFE_INTEGER)) {
+    throw new ApiError(400, "Enter a valid non-negative volume or chapter number.");
+  }
+  if (userId !== undefined) ensureUserProgressTables();
+  const { db } = store();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const book = getBook(id, userId);
+    const nextSeriesTitle = seriesTitle === undefined ? book.seriesTitle : seriesTitle;
+    let installmentType = "installmentType" in input ? input.installmentType : book.installmentType;
+    let installmentNumber = "installmentNumber" in input ? input.installmentNumber : book.installmentNumber;
+    if (seriesTitle === null) { installmentType = null; installmentNumber = null; }
+    if ((!nextSeriesTitle && (installmentType !== null || installmentNumber !== null))
+      || (installmentNumber !== null && installmentType === null)) {
+      throw new ApiError(400, "Choose a series and installment type before setting its number.");
+    }
+    const seriesId = nextSeriesTitle ? ensureSeries(db, nextSeriesTitle) : null;
+    const metadataEdited = keys.some(key => key !== "title");
+    db.prepare(`UPDATE books SET title = ?, seriesId = ?, installmentType = ?, installmentNumber = ?,
+      seriesMetadataManual = CASE WHEN ? THEN 1 ELSE seriesMetadataManual END WHERE id = ?`)
+      .run(title === undefined ? book.title : title, seriesId, installmentType as string | null, installmentNumber as number | null, metadataEdited ? 1 : 0, id);
+    const updated = getBook(id, userId);
+    db.exec("COMMIT");
+    return updated;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export function clearProgress(id: string, userId: string): Book {
