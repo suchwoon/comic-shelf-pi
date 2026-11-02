@@ -18,7 +18,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     requireAuth(request);
     return new Response(request.method === "HEAD" ? null : new Uint8Array(bytes), {
       headers: {
-        "Content-Type": "image/jpeg",
+        "Content-Type": "image/png",
         "Content-Length": String(bytes.byteLength),
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",

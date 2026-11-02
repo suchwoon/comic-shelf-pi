@@ -28,7 +28,9 @@ export interface PageDocument {
 }
 
 const MAX_CACHED_IMAGES = 12;
-const MAX_CACHED_BYTES = 24 * 1024 * 1024;
+// Lossless scans can use about 6 MiB each; retain the current page and eight ahead.
+// This budget contains compressed blobs only, not decoded images or page canvases.
+const MAX_CACHED_BYTES = 64 * 1024 * 1024;
 const MAX_IMAGE_REQUESTS = 2;
 
 interface ImageRequest {
@@ -243,7 +245,8 @@ export class ImagePageDocument implements PageDocument {
         if (request.controller.signal.aborted || this.destroyed) throw aborted();
         if (response.status === 401) window.location.replace("/");
         if (!response.ok) throw new Error("Page image could not be loaded");
-        if (response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "image/jpeg") {
+        const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+        if (contentType !== "image/png" && contentType !== "image/jpeg") {
           throw new Error("Invalid page image response");
         }
         const blob = await response.blob();

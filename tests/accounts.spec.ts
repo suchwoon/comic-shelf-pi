@@ -52,7 +52,7 @@ test("an invited reader can read with personal progress but cannot download orig
     reader.on("response", response => {
       if (response.headers()["content-type"]?.includes("application/pdf")) pdfResponses.push(response.url());
       if (new URL(response.url()).pathname.startsWith(`${endpoint}/pages/`) && response.ok()
-        && response.headers()["content-type"]?.startsWith("image/jpeg")) pageImages.push(new URL(response.url()).pathname);
+        && response.headers()["content-type"]?.startsWith("image/png")) pageImages.push(new URL(response.url()).pathname);
     });
     await reader.goto(url);
     await reader.getByLabel("Username", { exact: true }).fill(`reader_${Date.now()}`);
@@ -113,9 +113,9 @@ test("an invited reader can read with personal progress but cannot download orig
     }
     const image = await memberContext.request.get(`${endpoint}/pages/1`);
     expect(image.status()).toBe(200);
-    expect(image.headers()["content-type"]).toMatch(/^image\/jpeg/);
+    expect(image.headers()["content-type"]).toMatch(/^image\/png/);
     expect(image.headers()["cache-control"]).toContain("no-store");
-    expect((await image.body()).subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+    expect((await image.body()).subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
     await reader.getByRole("link", { name: "Read Members test", exact: true }).click();
     await expect(reader.getByTestId("pdf-page")).toHaveAttribute("data-page", "1");
     await revealReaderControls(reader);

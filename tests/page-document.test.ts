@@ -28,9 +28,9 @@ function fixture(t: TestContext, pageCount = 5) {
     onerror: (() => void) | null = null;
     constructor() { images.push(this); }
   }
-  let respond = async (_options: RequestInit) => new Response(new Blob(["image bytes"], { type: "image/jpeg" }), {
+  let respond = async (_options: RequestInit) => new Response(new Blob(["image bytes"], { type: "image/png" }), {
     status: 200,
-    headers: { "Content-Type": "image/jpeg" },
+    headers: { "Content-Type": "image/png" },
   });
   const globals = ["Image", "window", "fetch"] as const;
   const original = new Map(globals.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -328,9 +328,23 @@ describe("authenticated image page documents", () => {
     assert.equal(f.requests.length, 1);
   });
 
+  it("reuses a full forward window of lossless scans after the same pages are prefetched again", async t => {
+    const f = fixture(t, 12);
+    const scan = new Blob([new Uint8Array(6 * 1024 * 1024)], { type: "image/png" });
+    f.respond(async () => new Response(scan, { headers: { "Content-Type": "image/png" } }));
+    const pages = Array.from({ length: 9 }, (_, index) => index + 1);
+    f.document.prefetch(pages);
+    await until(() => f.requests.length === 9);
+    (await f.load(9)).cleanup();
+    // Resizing repeats the same prefetch window and rebuilds canvases from these blobs.
+    f.document.prefetch(pages);
+    for (const page of pages) (await f.load(page)).cleanup();
+    assert.equal(f.requests.length, 9, "the nine 6 MiB scans should not need another download");
+  });
+
   it("limits compressed cache bytes while keeping nearer pages ahead of distant pages", async t => {
     const f = fixture(t);
-    const largeImage = new Blob([new Uint8Array(9 * 1024 * 1024)], { type: "image/jpeg" });
+    const largeImage = new Blob([new Uint8Array(23 * 1024 * 1024)], { type: "image/jpeg" });
     f.respond(async () => new Response(largeImage, { headers: { "Content-Type": "image/jpeg" } }));
     f.document.prefetch([1, 2]);
     (await f.load(1)).cleanup();
@@ -339,7 +353,7 @@ describe("authenticated image page documents", () => {
     (await f.load(3)).cleanup();
     (await f.load(1)).cleanup();
     (await f.load(2)).cleanup();
-    assert.equal(f.requests.length, 3, "the first two 9 MiB pages fit the 24 MiB budget");
+    assert.equal(f.requests.length, 3, "the first two 23 MiB pages fit the 64 MiB budget");
     (await f.load(3)).cleanup();
     assert.equal(f.requests.length, 4, "the distant third page must be evicted under byte pressure");
   });

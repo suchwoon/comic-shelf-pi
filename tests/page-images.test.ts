@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, it } from "node:test";
-import { mkdtemp, open, readFile, readdir, rm, stat, utimes } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PDFDocument, rgb } from "pdf-lib";
@@ -99,27 +99,31 @@ it("requires authentication before looking up pages or creating the private cach
   await assert.rejects(stat(join(root, "pages")), { code: "ENOENT" });
 });
 
-it("serves only bounded JPEG pages, reuses private cache, and ignores ranges without exposing PDF bytes", async () => {
+it("serves only bounded PNG pages, reuses private cache, and ignores ranges without exposing PDF bytes", async () => {
+  const legacyCache = join(root, "pages", "v1");
+  await mkdir(legacyCache, { recursive: true });
+  await writeFile(join(legacyCache, `${book.id}-1.jpg`), "old compressed page");
   const [first, concurrent] = await Promise.all([
     pageGET(request(readerCookie), pageContext()),
     pageGET(request(readerCookie), pageContext()),
   ]);
   assert.equal(first.status, 200);
-  assert.equal(first.headers.get("content-type"), "image/jpeg");
+  assert.equal(first.headers.get("content-type"), "image/png");
   assert.equal(first.headers.get("cache-control"), "private, no-store");
   const bytes = Buffer.from(await first.arrayBuffer());
-  assert.deepEqual(bytes.subarray(0, 2), Buffer.from([0xff, 0xd8]));
+  assert.deepEqual(bytes.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   assert.deepEqual(Buffer.from(await concurrent.arrayBuffer()), bytes);
   const image = await loadImage(bytes);
   assert.equal(image.width, 1600);
   assert.equal(image.height, 2400);
-  const cacheFile = join(root, "pages", "v1", `${book.id}-1.jpg`);
+  const cacheFile = join(root, "pages", "v2", `${book.id}-1.png`);
   assert.deepEqual(await readFile(cacheFile), bytes);
   assert.equal((await stat(cacheFile)).mode & 0o777, 0o600);
-  assert.deepEqual(await readdir(join(root, "pages", "v1")), [`${book.id}-1.jpg`]);
+  assert.deepEqual(await readdir(join(root, "pages", "v2")), [`${book.id}-1.png`]);
+  await assert.rejects(stat(legacyCache), { code: "ENOENT" });
   const head = await pageHEAD(request(readerCookie, "HEAD"), pageContext());
   assert.equal(head.status, 200);
-  assert.equal(head.headers.get("content-type"), "image/jpeg");
+  assert.equal(head.headers.get("content-type"), "image/png");
   assert.equal(head.headers.get("content-length"), String(bytes.length));
   assert.equal(await head.text(), "");
   const range = await pageGET(request(readerCookie, "GET", "bytes=0-4"), pageContext());
@@ -127,7 +131,7 @@ it("serves only bounded JPEG pages, reuses private cache, and ignores ranges wit
   assert.equal(range.headers.get("content-range"), null);
   assert.deepEqual(Buffer.from(await range.arrayBuffer()), bytes);
   // A sparse fixture tests the disk budget without allocating hundreds of MB.
-  const oldCache = join(root, "pages", "v1", `${book.id}-50000.jpg`);
+  const oldCache = join(root, "pages", "v2", `${book.id}-50000.png`);
   const sparse = await open(oldCache, "wx", 0o600);
   try { await sparse.truncate(192 * 1024 * 1024 + 1); } finally { await sparse.close(); }
   await utimes(oldCache, new Date(0), new Date(0));
@@ -159,7 +163,7 @@ it("blocks revoked sessions even for cached images and removes page caches on bo
   }
   const pdfPath = bookFile(book.id);
   await deleteBook(book.id);
-  assert.deepEqual(await readdir(join(root, "pages", "v1")), []);
+  assert.deepEqual(await readdir(join(root, "pages", "v2")), []);
   await assert.rejects(stat(pdfPath), { code: "ENOENT" });
   assert.equal((await pageGET(request(adminCookie), pageContext())).status, 404);
 });

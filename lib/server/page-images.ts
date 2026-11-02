@@ -18,7 +18,20 @@ interface RenderState {
 }
 const shared = globalThis as typeof globalThis & { __comicPageImages?: RenderState };
 const state: RenderState = shared.__comicPageImages ??= { active: 0, waiting: [], pending: new Map(), pruning: Promise.resolve() };
-const cacheRoot = () => join(dataRoot(), "pages", "v1");
+const cacheRoot = () => join(dataRoot(), "pages", "v2");
+const preparedCaches = new Map<string, Promise<void>>();
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+function prepareCache(root: string): Promise<void> {
+  const existing = preparedCaches.get(root);
+  if (existing) return existing;
+  const ready = mkdir(root, { recursive: true, mode: 0o700 })
+    // Old JPEG pages must not survive the renderer change or consume a second cache budget.
+    .then(() => rm(join(root, "..", "v1"), { recursive: true, force: true }))
+    .catch(error => { preparedCaches.delete(root); throw error; });
+  preparedCaches.set(root, ready);
+  return ready;
+}
 
 export function parsePageNumber(value: string, pageCount: number) {
   if (!/^[1-9]\d{0,4}$/.test(value)) throw new ApiError(400, "The page number is invalid.");
@@ -70,9 +83,9 @@ async function renderPdfPage(input: string, output: string, page: number) {
 
 async function readImage(path: string) {
   const metadata = await stat(path);
-  if (metadata.size < 4 || metadata.size > MAX_IMAGE_BYTES) throw new ApiError(422, "The rendered page is invalid.");
+  if (metadata.size < PNG_SIGNATURE.length || metadata.size > MAX_IMAGE_BYTES) throw new ApiError(422, "The rendered page is invalid.");
   const bytes = await readFile(path);
-  if (bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[bytes.length - 2] !== 0xff || bytes[bytes.length - 1] !== 0xd9) {
+  if (!bytes.subarray(0, 8).equals(PNG_SIGNATURE)) {
     throw new ApiError(422, "The rendered page is invalid.");
   }
   return bytes;
@@ -80,7 +93,7 @@ async function readImage(path: string) {
 
 async function trimCache(root: string) {
   const entries = await readdir(root);
-  const files = (await Promise.all(entries.filter(name => name.endsWith(".jpg")).map(async name => {
+  const files = (await Promise.all(entries.filter(name => name.endsWith(".png")).map(async name => {
     const path = join(root, name);
     try { const metadata = await stat(path); return { path, size: metadata.size, used: metadata.mtimeMs }; }
     catch { return null; }
@@ -93,11 +106,12 @@ async function trimCache(root: string) {
   }
 }
 
-/** Returns only a rasterized JPEG; original document bytes stay on the server. */
+/** Returns a lossless page image; source PDFs remain private. */
 export async function pageImage(book: Book, page: number): Promise<Buffer> {
   parsePageNumber(String(page), book.pageCount);
   const root = cacheRoot();
-  const destination = join(root, `${book.id}-${page}.jpg`);
+  await prepareCache(root);
+  const destination = join(root, `${book.id}-${page}.png`);
   try {
     const bytes = await readImage(destination);
     const now = new Date();
@@ -131,8 +145,10 @@ export async function deletePageImages(id: string) {
   const root = cacheRoot();
   const prefix = join(root, `${id}-`);
   await Promise.allSettled([...state.pending].filter(([path]) => path.startsWith(prefix)).map(([, task]) => task));
-  let names: string[];
-  try { names = await readdir(root); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-  await Promise.all(names.filter(name => name.startsWith(`${id}-`)).map(name => rm(join(root, name), { force: true })));
+  for (const directory of [root, join(root, "..", "v1")]) {
+    let names: string[];
+    try { names = await readdir(directory); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+    await Promise.all(names.filter(name => name.startsWith(`${id}-`)).map(name => rm(join(directory, name), { force: true })));
+  }
 }

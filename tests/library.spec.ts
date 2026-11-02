@@ -42,7 +42,7 @@ test("reads scanned page images, normalizes legacy width fit, and restores readi
   });
   page.on("response", response => {
     if (new URL(response.url()).pathname.startsWith(`${endpoint}/pages/`) && response.ok()
-      && response.headers()["content-type"]?.startsWith("image/jpeg")) pageImages.push(new URL(response.url()).pathname);
+      && response.headers()["content-type"]?.startsWith("image/png")) pageImages.push(new URL(response.url()).pathname);
   });
   await page.goto(`/read/${book.id}`);
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
