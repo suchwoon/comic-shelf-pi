@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { CHAT_HISTORY_LIMIT, CHAT_MESSAGE_LIMIT, type AccountUser, type ChatMessage } from "../types";
+import { CHAT_HISTORY_LIMIT, CHAT_MESSAGE_LIMIT, type AccountUser, type ChatMessage, type ChatReadState } from "../types";
 import { ApiError } from "./http";
 import { store } from "./storage";
 
@@ -24,6 +24,10 @@ function chatStore() {
         UNIQUE (userId, clientId)
       );
       CREATE INDEX IF NOT EXISTS chat_messages_user_created ON chat_messages(userId, createdAt);
+      CREATE TABLE IF NOT EXISTS chat_read_states (
+        userId TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        lastReadMessageId INTEGER NOT NULL CHECK (lastReadMessageId >= 0)
+      );
     `);
     shared.__comicChatSchemas.add(db);
   }
@@ -33,6 +37,50 @@ function chatStore() {
 export function listChatMessages(): ChatMessage[] {
   return (chatStore().prepare(`SELECT ${columns} FROM chat_messages m JOIN users u ON u.id = m.userId
     ORDER BY m.id DESC LIMIT ?`).all(CHAT_HISTORY_LIMIT) as unknown as ChatMessage[]).reverse();
+}
+
+function readState(db: DatabaseSync, userId: string): ChatReadState {
+  const state = db.prepare(`SELECT r.lastReadMessageId,
+    COALESCE((SELECT MAX(id) FROM chat_messages), 0) AS latestMessageId,
+    EXISTS(SELECT 1 FROM chat_messages m WHERE m.id > r.lastReadMessageId AND m.userId <> r.userId) AS hasUnread
+    FROM chat_read_states r WHERE r.userId = ?`).get(userId) as unknown as Omit<ChatReadState, "hasUnread"> & { hasUnread: number };
+  return { ...state, hasUnread: state.hasUnread === 1 };
+}
+
+export function getChatReadState(user: AccountUser): ChatReadState {
+  const db = chatStore();
+  // Baseline once, atomically, so introducing unread indicators does not turn
+  // every historical message into a notification. Later visits keep the cursor.
+  db.prepare(`INSERT OR IGNORE INTO chat_read_states (userId, lastReadMessageId)
+    SELECT ?, COALESCE(MAX(id), 0) FROM chat_messages`).run(user.id);
+  return readState(db, user.id);
+}
+
+export function markChatRead(user: AccountUser, input: Record<string, unknown>): ChatReadState {
+  if (Object.keys(input).some(key => key !== "messageId")
+    || typeof input.messageId !== "number" || !Number.isSafeInteger(input.messageId) || input.messageId < 0) {
+    throw new ApiError(400, "The read position is invalid. Please try again.");
+  }
+  const db = chatStore();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (!db.prepare("SELECT 1 FROM users WHERE id = ? AND disabled = 0").get(user.id)) {
+      throw new ApiError(401, "Please sign in to continue.");
+    }
+    // A forged future cursor must never hide messages that have not arrived.
+    if (input.messageId !== 0 && !db.prepare("SELECT 1 FROM chat_messages WHERE id = ?").get(input.messageId)) {
+      throw new ApiError(400, "The read position is invalid. Please refresh the conversation.");
+    }
+    db.prepare(`INSERT INTO chat_read_states (userId, lastReadMessageId) VALUES (?, ?)
+      ON CONFLICT(userId) DO UPDATE SET lastReadMessageId = MAX(chat_read_states.lastReadMessageId, excluded.lastReadMessageId)`)
+      .run(user.id, input.messageId);
+    const state = readState(db, user.id);
+    db.exec("COMMIT");
+    return state;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export function createChatMessage(user: AccountUser, input: Record<string, unknown>): ChatMessage {

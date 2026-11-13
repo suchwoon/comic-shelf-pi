@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { ArrowDown, ArrowUp, LoaderCircle, MessageCircle, X } from "lucide-react";
 import { CHAT_HISTORY_LIMIT, CHAT_MESSAGE_LIMIT } from "@/lib/types";
-import type { AccountUser, ChatMessage } from "@/lib/types";
+import type { AccountUser, ChatMessage, ChatReadState } from "@/lib/types";
 import { showModalDialog } from "@/lib/client/dialog";
 
 async function responseError(response: Response, fallback: string) {
@@ -34,12 +34,20 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
   const [newMessages, setNewMessages] = useState(false);
+  const [readState, setReadState] = useState<ChatReadState | null>(null);
+  const [unreadStartId, setUnreadStartId] = useState<number | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const launcherRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const dividerRef = useRef<HTMLDivElement>(null);
+  const readStateRef = useRef<ChatReadState | null>(null);
+  const unreadStartRef = useRef<number | null>(null);
+  const needsInitialPosition = useRef(true);
+  const latestFetchedId = useRef(0);
   const nearBottom = useRef(true);
   const sendController = useRef<AbortController | null>(null);
+  const readController = useRef<AbortController | null>(null);
   const pendingMessage = useRef<{ body: string; clientId: string } | null>(null);
   const composing = useRef(false);
 
@@ -52,6 +60,61 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
   }
 
   useLayoutEffect(() => { resizeInput(); }, [draft]);
+
+  function updateReadState(incoming: ChatReadState) {
+    const previous = readStateRef.current;
+    // Polling and read receipts can finish out of order, including across tabs.
+    const lastReadMessageId = Math.max(previous?.lastReadMessageId ?? 0, incoming.lastReadMessageId);
+    const latestMessageId = Math.max(previous?.latestMessageId ?? 0, incoming.latestMessageId);
+    const current = !previous || (incoming.lastReadMessageId >= previous.lastReadMessageId
+      && incoming.latestMessageId >= previous.latestMessageId);
+    const next = { lastReadMessageId, latestMessageId, hasUnread: lastReadMessageId >= latestMessageId ? false
+      : current ? incoming.hasUnread : !!previous?.hasUnread || incoming.hasUnread };
+    readStateRef.current = next;
+    setReadState(next);
+  }
+
+  async function markRead() {
+    // A send response can precede fetching somebody else's intervening message.
+    // Only acknowledge history that was actually loaded into the conversation.
+    const latest = latestFetchedId.current;
+    const list = listRef.current;
+    const modal = document.querySelector("dialog:modal");
+    if (!open || !loaded || needsInitialPosition.current || document.hidden || !nearBottom.current
+      || (modal && modal !== dialogRef.current)
+      || !list || list.scrollHeight - list.scrollTop - list.clientHeight > 2
+      || !latest || !readStateRef.current || latest <= readStateRef.current.lastReadMessageId || readController.current) return;
+    const controller = new AbortController();
+    readController.current = controller;
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const response = await fetch("/api/chat/read", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageId: latest }), signal: controller.signal,
+      });
+      if (response.status === 401) { onUnauthorized(); return; }
+      if (!response.ok) return;
+      const data: { readState: ChatReadState } = await response.json();
+      if (!controller.signal.aborted) updateReadState(data.readState);
+    } catch { /* Keep unread state until saved; the next poll retries while visible. */ }
+    finally {
+      clearTimeout(timeout);
+      readController.current = null;
+    }
+  }
+
+  function openChat() {
+    needsInitialPosition.current = true;
+    latestFetchedId.current = 0;
+    nearBottom.current = false;
+    unreadStartRef.current = null;
+    setUnreadStartId(null);
+    setNewMessages(false);
+    setMessages([]);
+    setLoaded(false);
+    setLoadError("");
+    setOpen(true);
+  }
 
   function mergeMessages(incoming: ChatMessage[]) {
     setMessages(previous => {
@@ -122,7 +185,6 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
     let disposed = false;
     let active: AbortController | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -133,22 +195,33 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
       active = controller;
       const timeout = setTimeout(() => controller.abort(), 10_000);
       try {
-        const response = await fetch("/api/chat", { cache: "no-store", signal: controller.signal });
+        const response = await fetch(open ? "/api/chat" : "/api/chat?status=1", { cache: "no-store", signal: controller.signal });
         if (disposed) return;
         if (response.status === 401) { onUnauthorized(); return; }
         if (!response.ok) throw new Error(await responseError(response, "Could not load the conversation. Retrying…"));
-        const data: { messages: ChatMessage[] } = await response.json();
-        if (disposed) return;
-        mergeMessages(data.messages);
-        setLoaded(true);
-        setLoadError("");
+        const data: { messages?: ChatMessage[]; readState: ChatReadState } = await response.json();
+        if (disposed || document.hidden) return;
+        updateReadState(data.readState);
+        if (open && data.messages) {
+          latestFetchedId.current = data.messages.at(-1)?.id ?? 0;
+          if (unreadStartRef.current === null && (needsInitialPosition.current || !nearBottom.current)) {
+            const firstUnread = data.messages.find(message => message.id > readStateRef.current!.lastReadMessageId && message.userId !== user.id);
+            if (firstUnread) {
+              unreadStartRef.current = firstUnread.id;
+              setUnreadStartId(firstUnread.id);
+            }
+          }
+          mergeMessages(data.messages);
+          setLoaded(true);
+          setLoadError("");
+        }
       } catch (cause) {
-        if (!disposed && !document.hidden) setLoadError(cause instanceof Error && cause.name !== "AbortError"
+        if (open && !disposed && !document.hidden) setLoadError(cause instanceof Error && cause.name !== "AbortError"
           ? cause.message : "Could not connect. Retrying…");
       } finally {
         clearTimeout(timeout);
         active = null;
-        if (!disposed && !document.hidden) timer = setTimeout(() => void poll(), 3000);
+        if (!disposed && !document.hidden) timer = setTimeout(() => void poll(), open ? 3000 : 10_000);
       }
     };
     const onVisibility = () => {
@@ -166,17 +239,28 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("online", onVisibility);
     };
-  }, [open, onUnauthorized]);
+  }, [open, onUnauthorized, user.id]);
 
-  useEffect(() => () => sendController.current?.abort(), []);
+  useEffect(() => () => {
+    sendController.current?.abort();
+    readController.current?.abort();
+  }, []);
 
   useLayoutEffect(() => {
-    if (!open) return;
-    if (nearBottom.current && listRef.current) {
-      listRef.current.scrollTop = listRef.current.scrollHeight;
-      setNewMessages(false);
-    } else setNewMessages(true);
-  }, [messages, open, loaded]);
+    const list = listRef.current;
+    if (!open || !loaded || !list) return;
+    if (needsInitialPosition.current) {
+      // Keep this opening's divider even after the read receipt is saved.
+      // It remains a useful landmark until the conversation is closed.
+      list.scrollTop = dividerRef.current
+        ? list.scrollTop + dividerRef.current.getBoundingClientRect().top - list.getBoundingClientRect().top - 18
+        : list.scrollHeight;
+      needsInitialPosition.current = false;
+    } else if (nearBottom.current) list.scrollTop = list.scrollHeight;
+    nearBottom.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+    setNewMessages(!nearBottom.current && !!readState?.hasUnread);
+    void markRead();
+  }, [messages, open, loaded, readState]);
 
   async function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -211,10 +295,14 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
     }
   }
 
+  const dividerMessageId = unreadStartId === null ? null
+    : messages.find(message => message.id >= unreadStartId && message.userId !== user.id)?.id;
+
   return <>
     <button ref={launcherRef} className="shelf-button shelf-button-light shelf-chat-launcher" type="button"
-      aria-label="Open chat" aria-expanded={open} aria-controls="shelf-chat" onClick={() => { nearBottom.current = true; setOpen(true); }} hidden={open}>
+      aria-label={readState?.hasUnread ? "Open chat, unread messages" : "Open chat"} aria-expanded={open} aria-controls="shelf-chat" onClick={openChat} hidden={open}>
       <MessageCircle size={18} strokeWidth={1.5} /><span>Chat</span>
+      {readState?.hasUnread && <span className="shelf-chat-unread" aria-hidden="true" />}
     </button>
     <dialog ref={dialogRef} id="shelf-chat" className="shelf-chat" aria-labelledby="shelf-chat-title"
       onCancel={event => { event.preventDefault(); setOpen(false); }}>
@@ -227,7 +315,7 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
           onScroll={event => {
             const list = event.currentTarget;
             nearBottom.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
-            if (nearBottom.current) setNewMessages(false);
+            if (nearBottom.current) { setNewMessages(false); void markRead(); }
           }}>
           {!messages.length && <div className="shelf-chat-empty">
             {!loaded && !loadError ? <><LoaderCircle size={21} className="shelf-spin" /><p>Loading conversation…</p></> : loadError ? <p>Waiting for a connection…</p> : <><MessageCircle size={26} strokeWidth={1.2} /><p>No messages yet.<br />Say hello to your fellow readers.</p></>}
@@ -237,20 +325,24 @@ export default function ChatPanel({ user, onUnauthorized }: { user: AccountUser;
             const sentAt = new Date(message.createdAt);
             const previousSentAt = previous ? new Date(previous.createdAt) : null;
             const gap = previousSentAt ? sentAt.getTime() - previousSentAt.getTime() : Infinity;
-            const continued = previous?.userId === message.userId && gap >= 0 && gap <= 5 * 60_000
+            const startsUnread = message.id === dividerMessageId;
+            const continued = !startsUnread && previous?.userId === message.userId && gap >= 0 && gap <= 5 * 60_000
               && previousSentAt?.toDateString() === sentAt.toDateString();
-            return <article className={`shelf-chat-message${continued ? " shelf-chat-message-continued" : ""}`} key={message.id}
+            return <Fragment key={message.id}>
+              {startsUnread && <div ref={dividerRef} className="shelf-chat-divider" role="separator" aria-label="New messages"><span>New messages</span></div>}
+              <article className={`shelf-chat-message${continued ? " shelf-chat-message-continued" : ""}`}
               aria-label={`${message.username}${message.userId === user.id ? " (you)" : ""}`}>
               {!continued && <div className="shelf-chat-message-meta"><strong>{message.username}</strong>
                 <time dateTime={message.createdAt} title={sentAt.toLocaleString()}>{sentAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
               </div>}<p>{message.body}</p>
-            </article>;
+            </article></Fragment>;
           })}
         </div>
         {newMessages && <button type="button" className="shelf-chat-new" onClick={() => {
           nearBottom.current = true;
           if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
           setNewMessages(false);
+          void markRead();
         }}>New messages<ArrowDown size={13} /></button>}
       </div>
       {loadError && <p className="shelf-chat-status" role="status">{loadError}</p>}

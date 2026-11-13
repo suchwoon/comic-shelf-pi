@@ -59,6 +59,12 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+export interface ChatReadState {
+  lastReadMessageId: number;
+  latestMessageId: number;
+  hasUnread: boolean;
+}
+
 export const CHAT_MESSAGE_LIMIT = 1000;
 export const CHAT_HISTORY_LIMIT = 50;
 

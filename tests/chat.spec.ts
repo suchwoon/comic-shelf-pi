@@ -12,8 +12,9 @@ function isChatRequest(url: string) {
 }
 
 async function openChat(page: Page) {
-  const loaded = page.waitForResponse(response => isChatRequest(response.url()) && response.request().method() === "GET");
-  await page.getByRole("button", { name: "Open chat", exact: true }).click();
+  const loaded = page.waitForResponse(response => isChatRequest(response.url())
+    && !new URL(response.url()).searchParams.has("status") && response.request().method() === "GET");
+  await page.getByRole("button", { name: /^Open chat/ }).click();
   expect((await loaded).status()).toBe(200);
   const dialog = page.getByRole("dialog", { name: "Chat", exact: true });
   await expect(dialog).toBeVisible();
@@ -78,7 +79,7 @@ test("members share one chat and saved messages survive closing and reloading", 
     await adminChat.getByRole("button", { name: "Close chat", exact: true }).click();
     await page.getByRole("button", { name: "Sign out", exact: true }).click();
     await expect(page.getByLabel("Library password")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Open chat", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Open chat/ })).toHaveCount(0);
     await expect(adminChat).toHaveCount(0);
     expect((await page.request.get("/api/chat")).status()).toBe(401);
     expect(errors).toEqual([]);

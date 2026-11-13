@@ -44,14 +44,30 @@ async function readError(response: Response, fallback: string) {
   return fallback;
 }
 
-function BookCover({ book, small = false }: { book: Book; small?: boolean }) {
+// Match the grid columns, gaps, and main padding in bookshelf.css.
+const COVER_SIZES = "(max-width: 370px) calc((100vw - 48px) / 2), (max-width: 600px) calc((100vw - 64px) / 2), (max-width: 800px) calc((100vw - 100px) / 3), (max-width: 1100px) calc((100vw - 155px) / 4), (max-width: 1280px) calc((100vw - 180px) / 5), 220px";
+const EAGER_COVER_COUNT = 5;
+
+function BookCover({ book, small = false, eager = false }: { book: Book; small?: boolean; eager?: boolean }) {
+  // A series can acquire a different representative book after an edit.
+  return <BookCoverImage key={`${book.id}:${small}`} bookId={book.id} small={small} eager={eager} />;
+}
+
+function BookCoverImage({ bookId, small, eager }: { bookId: string; small: boolean; eager: boolean }) {
   const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
+  const coverUrl = `/api/books/${bookId}/cover`;
+  const imageRef = useCallback((image: HTMLImageElement | null) => {
+    // A cached image may already be complete when React attaches the element.
+    if (image?.complete && image.naturalWidth > 0) setStatus("loaded");
+  }, []);
   return (
     <div className={`shelf-cover${small ? " shelf-cover-small" : ""}`}>
       {status !== "loaded" && <div className="shelf-cover-fallback" aria-hidden="true">
         <BookOpen size={small ? 20 : 32} strokeWidth={1.2} />
       </div>}
-      {status !== "error" && <img src={`/api/books/${book.id}/cover`} alt="" loading="lazy"
+      {status !== "error" && <img ref={imageRef} src={`${coverUrl}?w=${small ? 96 : 480}`}
+        srcSet={small ? undefined : `${coverUrl}?w=320 320w, ${coverUrl}?w=480 480w, ${coverUrl}?w=680 680w`}
+        sizes={small ? undefined : COVER_SIZES} alt="" loading={eager ? "eager" : "lazy"} decoding="async"
         onLoad={() => setStatus("loaded")} onError={() => setStatus("error")} />}
     </div>
   );
@@ -441,12 +457,12 @@ function BookshelfContent() {
       </section>
     );
   } else {
-    function renderBook(book: Book) {
+    function renderBook(book: Book, index: number) {
       const percentage = Math.min(100, Math.round(book.currentPage / Math.max(1, book.pageCount) * 100));
       return (
         <article key={book.id} className="shelf-book-card">
           <Link className="shelf-book-link" href={`/read/${book.id}`} onClick={openReader} aria-label={`Read ${book.title}`}>
-            <BookCover book={book} />
+            <BookCover book={book} eager={index < EAGER_COVER_COUNT} />
             {selectedSeries && <span className="shelf-installment-label">{installmentLabel(book)}</span>}
             <h3 title={book.title}>{book.title}</h3>
           </Link>
@@ -484,7 +500,7 @@ function BookshelfContent() {
         </div>
         {readingTarget && !loading && (
           <Link href={`/read/${readingTarget.book.id}`} onClick={openReader} className="shelf-continue" aria-label={`${readingTarget.label} ${readingTarget.book.title}`}>
-            <BookCover key={readingTarget.book.id} book={readingTarget.book} small />
+            <BookCover key={readingTarget.book.id} book={readingTarget.book} small eager />
             <div className="shelf-continue-copy"><span>{readingTarget.label}</span><h2 title={readingTarget.book.title}>{readingTarget.book.title}</h2><p>{selectedSeries && <>{installmentLabel(readingTarget.book)} · </>}Page {readingTarget.book.currentPage} of {readingTarget.book.pageCount}</p></div>
             <ArrowRight size={17} />
           </Link>
@@ -512,13 +528,13 @@ function BookshelfContent() {
         ) : resultCount === 0 ? (
           <div className="shelf-no-results"><Search size={28} strokeWidth={1.4} /><h2>No books found</h2><p>Try a different title.</p><button className="shelf-button shelf-button-light" onClick={() => setQuery("")}>Clear search</button></div>
         ) : <>
-          <div className="shelf-book-grid">{selectedSeries ? filteredBooks.map(renderBook) : visibleEntries.map(entry => {
-            if (!entry.series) return renderBook(entry.books[0]);
+          <div className="shelf-book-grid">{selectedSeries ? filteredBooks.map(renderBook) : visibleEntries.map((entry, index) => {
+            if (!entry.series) return renderBook(entry.books[0], index);
             const completed = entry.books.filter(isCompleted).length;
             const latestRead = [...entry.books].filter(book => book.lastReadAt).sort((a, b) => Date.parse(b.lastReadAt!) - Date.parse(a.lastReadAt!))[0];
             return <article key={`series:${entry.id}`} className="shelf-book-card shelf-series-card">
               <Link className="shelf-book-link" href={`/?series=${entry.id}`} aria-label={`Open series ${entry.title}`}>
-                <div className="shelf-series-cover"><BookCover book={entry.books[0]} /><span className="shelf-series-badge"><Layers size={12} />Series</span></div>
+                <div className="shelf-series-cover"><BookCover book={entry.books[0]} eager={index < EAGER_COVER_COUNT} /><span className="shelf-series-badge"><Layers size={12} />Series</span></div>
                 <h3 title={entry.title}>{entry.title}</h3>
               </Link>
               <div className="shelf-book-meta"><span>{installmentCount(entry.books)}</span><ArrowRight size={14} aria-hidden="true" /></div>

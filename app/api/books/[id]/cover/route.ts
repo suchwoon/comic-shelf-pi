@@ -1,7 +1,7 @@
 import { requireAuth } from "@/lib/server/auth";
-import { serveFile } from "@/lib/server/files";
+import { serveCover } from "@/lib/server/cover-images";
 import { errorResponse } from "@/lib/server/http";
-import { coverFile, getBook } from "@/lib/server/storage";
+import { getBook } from "@/lib/server/storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   try {
     const user = requireAuth(request);
     const book = getBook((await context.params).id, user.id);
-    return await serveFile(request, coverFile(book.id), "image/jpeg");
+    return await serveCover(request, book.id);
   } catch (error) { return errorResponse(error); }
 }
 

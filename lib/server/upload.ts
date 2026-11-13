@@ -6,6 +6,7 @@ import { DEFAULT_READING_DIRECTION, type Book } from "../types";
 import { ApiError } from "./http";
 import { bookFile, classifyImportedBooks, coverFile, getBook, maxUploadBytes, store } from "./storage";
 import { deletePageImages } from "./page-images";
+import { deleteCoverImages } from "./cover-images";
 
 const inspectionState = globalThis as typeof globalThis & { __comicInspecting?: boolean };
 
@@ -152,5 +153,5 @@ export async function deleteBook(id: string) {
     await Promise.all(moved.map(file => rename(file.to, file.from)));
     throw error;
   }
-  await Promise.all([deletePageImages(id), ...moved.map(file => rm(file.to, { force: true }))]);
+  await Promise.all([deletePageImages(id), deleteCoverImages(id), ...moved.map(file => rm(file.to, { force: true }))]);
 }

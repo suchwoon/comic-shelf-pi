@@ -2,6 +2,11 @@
    native iOS scrolling makes it chase transient offsets and snap back. */
 .shelf-chat-launcher { --chat-edge: 24px; position: fixed; right: var(--chat-edge); bottom: max(var(--chat-edge), env(safe-area-inset-bottom)); z-index: 20; min-height: 44px; box-shadow: 0 3px 12px var(--menu-shadow); }
 .shelf-chat-launcher[hidden] { display: none; }
+.shelf-chat-unread { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: #c76a24; box-shadow: 0 0 0 2px var(--surface); }
+:root[data-theme="dark"] .shelf-chat-unread { background: #edaa70; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .shelf-chat-unread { background: #edaa70; }
+}
 .shelf-chat { position: fixed; inset: auto 24px 24px auto; z-index: 30; width: 360px; max-width: calc(100vw - 32px); height: 460px; max-height: calc(100dvh - 48px); margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--surface); box-shadow: 0 8px 32px var(--dialog-shadow); overflow: hidden; }
 .shelf-chat[open] { display: flex; flex-direction: column; }
 .shelf-chat-header { flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 10px 8px 18px; border-bottom: 1px solid var(--line); }
@@ -17,6 +22,9 @@
 .shelf-chat-message-meta time { margin-left: auto; }
 .shelf-chat-message p { margin: 5px 0 0; font-size: 13px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
 .shelf-chat-message + .shelf-chat-message-continued { margin-top: 6px; }
+.shelf-chat-divider { display: flex; align-items: center; gap: 10px; margin: 20px 0 16px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.shelf-chat-divider:first-child { margin-top: 0; }
+.shelf-chat-divider::before, .shelf-chat-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .shelf-chat-message-continued p { margin-top: 0; }
 .shelf-chat-new { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); box-shadow: 0 3px 12px var(--menu-shadow); white-space: nowrap; font-size: 11px; }
 .shelf-chat-status { flex-shrink: 0; margin: 0; padding: 8px 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.6; }

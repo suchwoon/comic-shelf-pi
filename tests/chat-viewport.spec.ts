@@ -7,7 +7,7 @@ test("chat launcher keeps its native bottom anchor during transient visual viewp
     data: { username: "admin", password: "test-only-comic-shelf-passphrase" },
   })).ok()).toBe(true);
   await page.goto("/");
-  const launcher = page.getByRole("button", { name: "Open chat", exact: true });
+  const launcher = page.getByRole("button", { name: /^Open chat/ });
   await expect(launcher).toBeVisible();
 
   // Regression: the launcher used to chase these transient values through JS.

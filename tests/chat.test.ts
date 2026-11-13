@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GET, POST } from "../app/api/chat/route";
+import { POST as markRead } from "../app/api/chat/read/route";
 import { createInvitation, setUserDisabled } from "../lib/server/accounts";
 import { login, register } from "../lib/server/auth";
 import { store } from "../lib/server/storage";
@@ -22,11 +23,11 @@ function closeStore() {
   delete shared.__comicStore;
 }
 
-function request(method = "GET", cookie?: string, body?: unknown, origin = "http://localhost:3000") {
+function request(method = "GET", cookie?: string, body?: unknown, origin = "http://localhost:3000", path = "/api/chat") {
   const headers = new Headers({ Origin: origin });
   if (cookie) headers.set("Cookie", cookie);
   if (body !== undefined) headers.set("Content-Type", "application/json");
-  return new Request("http://localhost:3000/api/chat", {
+  return new Request(`http://localhost:3000${path}`, {
     method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
 }
@@ -35,6 +36,12 @@ async function administrator() { return login(request(), "admin", "chat-test-pas
 async function reader() { return register(request(), createInvitation().token, "reader.one", "reader-test-password"); }
 async function send(cookie: string, body: string, clientId: string = randomUUID()) {
   return POST(request("POST", cookie, { body, clientId }));
+}
+async function status(cookie: string) {
+  return GET(request("GET", cookie, undefined, "http://localhost:3000", "/api/chat?status=1"));
+}
+async function readThrough(cookie: string, messageId: unknown) {
+  return markRead(request("POST", cookie, { messageId }, "http://localhost:3000", "/api/chat/read"));
 }
 
 beforeEach(async () => {
@@ -62,7 +69,9 @@ it("requires a valid session to read or write and rejects requests from other or
   const admin = await administrator();
   assert.equal((await GET(request("GET", admin.cookie, undefined, "https://other.example"))).status, 403);
   assert.equal((await POST(request("POST", admin.cookie, { body: "hello", clientId: randomUUID() }, "https://other.example"))).status, 403);
-  assert.deepEqual(await (await GET(request("GET", admin.cookie))).json(), { messages: [] });
+  assert.deepEqual(await (await GET(request("GET", admin.cookie))).json(), {
+    messages: [], readState: { lastReadMessageId: 0, latestMessageId: 0, hasUnread: false },
+  });
 });
 
 it("lets readers participate with their authenticated identity and keeps messages as plain text", async () => {
@@ -81,7 +90,9 @@ it("lets readers participate with their authenticated identity and keeps message
   assert.deepEqual(Object.keys(message).sort(), ["body", "createdAt", "id", "userId", "username"]);
   const listing = await GET(request("GET", admin.cookie));
   assert.equal(listing.headers.get("cache-control"), "no-store");
-  assert.deepEqual(await listing.json(), { messages: [message] });
+  assert.deepEqual(await listing.json(), {
+    messages: [message], readState: { lastReadMessageId: 1, latestMessageId: 1, hasUnread: false },
+  });
   for (const identity of [{ userId: admin.user.id }, { username: "admin" }, { createdAt: "2020-01-01" }]) {
     const forged = await POST(request("POST", member.cookie, { body: "spoof", clientId: randomUUID(), ...identity }));
     assert.equal(forged.status, 400);
@@ -111,7 +122,9 @@ it("validates text and client IDs before storage and bounds the JSON request siz
   }
   assert.equal((await POST(request("POST", admin.cookie, []))).status, 400);
   assert.equal((await send(admin.cookie, "x".repeat(17_000))).status, 413);
-  assert.deepEqual(await (await GET(request("GET", admin.cookie))).json(), { messages: [] });
+  assert.deepEqual(await (await GET(request("GET", admin.cookie))).json(), {
+    messages: [], readState: { lastReadMessageId: 0, latestMessageId: 0, hasUnread: false },
+  });
   const maximum = await send(admin.cookie, "한".repeat(CHAT_MESSAGE_LIMIT));
   assert.equal(maximum.status, 201);
   assert.equal((await maximum.json()).message.body.length, CHAT_MESSAGE_LIMIT);
@@ -171,4 +184,92 @@ it("limits each user to 20 new messages per rolling minute while allowing retrie
   const { messages } = await (await GET(request("GET", admin.cookie))).json() as { messages: ChatMessage[] };
   assert.equal(messages.length, 22);
   assert.equal(messages.at(-1)?.body, "the next minute");
+});
+
+it("baselines existing history once and preserves unread messages across visits and storage reopening", async () => {
+  const admin = await administrator();
+  const member = await reader();
+  await send(admin.cookie, "before unread tracking");
+  const initial = await status(member.cookie);
+  assert.equal(initial.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await initial.json(), {
+    readState: { lastReadMessageId: 1, latestMessageId: 1, hasUnread: false },
+  });
+  await send(admin.cookie, "a new message");
+  closeStore();
+  const expected = { lastReadMessageId: 1, latestMessageId: 2, hasUnread: true };
+  assert.deepEqual(await (await status(member.cookie)).json(), { readState: expected });
+  const full = await (await GET(request("GET", member.cookie))).json();
+  assert.equal(full.messages.length, 2);
+  assert.deepEqual(full.readState, expected);
+  assert.deepEqual(await (await status(member.cookie)).json(), { readState: expected });
+});
+
+it("ignores own messages and keeps monotonic read positions per account across sessions", async () => {
+  const admin = await administrator();
+  const member = await reader();
+  await status(admin.cookie);
+  await status(member.cookie);
+  await send(admin.cookie, "first from admin");
+  assert.deepEqual((await (await status(admin.cookie)).json()).readState,
+    { lastReadMessageId: 0, latestMessageId: 1, hasUnread: false });
+  assert.deepEqual((await (await status(member.cookie)).json()).readState,
+    { lastReadMessageId: 0, latestMessageId: 1, hasUnread: true });
+  await send(member.cookie, "reply from member");
+  const readResponse = await readThrough(member.cookie, 1);
+  assert.equal(readResponse.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await readResponse.json(), {
+    readState: { lastReadMessageId: 1, latestMessageId: 2, hasUnread: false },
+  });
+  assert.deepEqual((await (await status(admin.cookie)).json()).readState,
+    { lastReadMessageId: 0, latestMessageId: 2, hasUnread: true });
+  await send(admin.cookie, "another new message");
+  const results = await Promise.all([readThrough(member.cookie, 3), readThrough(member.cookie, 1)]);
+  for (const response of results) assert.equal(response.status, 200);
+  const secondSession = await login(request(), "reader.one", "reader-test-password");
+  closeStore();
+  assert.deepEqual((await (await status(secondSession.cookie)).json()).readState,
+    { lastReadMessageId: 3, latestMessageId: 3, hasUnread: false });
+  assert.deepEqual((await (await readThrough(member.cookie, 0)).json()).readState,
+    { lastReadMessageId: 3, latestMessageId: 3, hasUnread: false });
+});
+
+it("protects read state with authentication and rejects malformed, unknown, and future positions", async () => {
+  assert.equal((await markRead(request("POST", undefined, { messageId: 0 }))).status, 401);
+  const admin = await administrator();
+  const member = await reader();
+  await status(member.cookie);
+  assert.equal((await markRead(request("POST", member.cookie, { messageId: 0 }, "https://other.example"))).status, 403);
+  for (const messageId of [undefined, null, "0", -1, 0.5, Number.MAX_SAFE_INTEGER + 1, 1, 999]) {
+    assert.equal((await readThrough(member.cookie, messageId)).status, 400);
+  }
+  assert.equal((await markRead(request("POST", member.cookie, { messageId: 0, userId: admin.user.id }))).status, 400);
+  assert.equal((await markRead(request("POST", member.cookie, []))).status, 400);
+  assert.equal((await readThrough(member.cookie, 0)).status, 200);
+  await send(admin.cookie, "one");
+  await send(admin.cookie, "two");
+  store().db.prepare("DELETE FROM chat_messages WHERE id = 1").run();
+  assert.equal((await readThrough(member.cookie, 1)).status, 400);
+  assert.deepEqual((await (await status(member.cookie)).json()).readState,
+    { lastReadMessageId: 0, latestMessageId: 2, hasUnread: true });
+  assert.equal((await readThrough(member.cookie, 2)).status, 200);
+  setUserDisabled(member.user.id, true);
+  assert.equal((await status(member.cookie)).status, 401);
+  assert.equal((await readThrough(member.cookie, 2)).status, 401);
+});
+
+it("detects unread messages outside the latest history window", async () => {
+  const admin = await administrator();
+  const member = await reader();
+  await status(member.cookie);
+  await send(admin.cookie, "unread but outside the history window");
+  const insert = store().db.prepare("INSERT INTO chat_messages (userId, clientId, body, createdAt) VALUES (?, ?, ?, ?)");
+  for (let index = 0; index < CHAT_HISTORY_LIMIT; index++) {
+    insert.run(member.user.id, randomUUID(), `Own message ${index}`, "2026-01-01T00:00:00.000Z");
+  }
+  const full = await (await GET(request("GET", member.cookie))).json();
+  assert.equal(full.messages.length, CHAT_HISTORY_LIMIT);
+  assert.ok(full.messages.every((message: ChatMessage) => message.userId === member.user.id));
+  assert.deepEqual(full.readState,
+    { lastReadMessageId: 0, latestMessageId: CHAT_HISTORY_LIMIT + 1, hasUnread: true });
 });
