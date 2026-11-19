@@ -6,8 +6,9 @@ const storageKey = "comic-shelf-theme";
 async function expectTheme(page: Page, theme: "light" | "dark", reader = false) {
   await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
   await expect(page.locator('meta[name="theme-color"]')).toHaveCount(1);
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", reader ? "#141414" : theme === "dark" ? "#181818" : "#fafafa");
   await expect(page.locator("html")).toHaveCSS("color-scheme", theme);
-  await expect(page.locator("body")).toHaveCSS("background-color", reader || theme === "dark" ? "rgb(20, 20, 20)" : "rgb(250, 250, 250)");
+  await expect(page.locator("body")).toHaveCSS("background-color", reader ? "rgb(20, 20, 20)" : theme === "dark" ? "rgb(24, 24, 24)" : "rgb(250, 250, 250)");
 }
 
 async function expectReadableDarkControl(locator: Locator) {
@@ -71,7 +72,6 @@ test("appearance uses the system initially, toggles with the keyboard, and keeps
   await page.emulateMedia({ colorScheme: "dark" });
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expectTheme(page, "light");
-  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#fafafa");
   await page.reload();
   await expect(switchToDark).toBeVisible();
   await expectTheme(page, "light");
@@ -88,7 +88,6 @@ test("saved appearance and legacy or invalid-preference fallbacks apply before h
       await page.route(/\/_next\/.*\.js(?:\?|$)/, route => route.abort());
       await page.goto("/", { waitUntil: "domcontentloaded" });
       await expectTheme(page, saved === "light" ? "light" : "dark");
-      await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", saved === "light" ? "#fafafa" : "#141414");
     } finally {
       await page.close();
     }
@@ -227,6 +226,7 @@ test("dark appearance preserves cover and PDF colors and the reader stays dark i
     });
     for (const [index, channel] of [204, 51, 26].entries()) expect(Math.abs(coverPixel[index] - channel)).toBeLessThanOrEqual(4);
     await page.getByRole("link", { name: "Read Theme colors", exact: true }).click();
+    await expectTheme(page, "dark", true);
     const canvas = page.getByTestId("pdf-page");
     await expect(canvas).toHaveAttribute("data-page", "1");
     await expect(page.locator(".reader-page-surface")).toHaveAttribute("aria-busy", "false");
@@ -253,7 +253,6 @@ test("dark appearance preserves cover and PDF colors and the reader stays dark i
     await expectTheme(otherTab, "light");
     await expect(page.locator(".reader-root")).toHaveCSS("background-color", "rgb(20, 20, 20)");
     await expect(page.locator(".reader-root")).toHaveCSS("color-scheme", "dark");
-    await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#141414");
     expect(await pixel()).toEqual(original);
   } finally {
     await otherTab?.close();

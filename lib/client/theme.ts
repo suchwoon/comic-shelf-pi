@@ -2,7 +2,8 @@ export type Theme = "light" | "dark";
 
 export const THEME_STORAGE_KEY = "comic-shelf-theme";
 export const THEME_MEDIA_QUERY = "(prefers-color-scheme: dark)";
-export const THEME_COLORS = { light: "#fafafa", dark: "#141414" } as const;
+export const THEME_COLORS = { light: "#fafafa", dark: "#181818" } as const;
+const READER_THEME_COLOR = "#141414";
 
 export function resolveTheme(value: string | null): Theme {
   // Missing, invalid, and legacy "system" preferences use the device as an initial value.
@@ -21,7 +22,7 @@ export function readTheme(): Theme {
 export function applyTheme(theme: Theme) {
   document.documentElement.dataset.theme = theme;
   // The reader keeps its dark surroundings regardless of the shelf preference.
-  const color = window.location.pathname.startsWith("/read/") ? THEME_COLORS.dark : THEME_COLORS[theme];
+  const color = window.location.pathname.startsWith("/read/") ? READER_THEME_COLOR : THEME_COLORS[theme];
   let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
   if (!meta) {
     meta = document.createElement("meta");
@@ -45,6 +46,6 @@ export const THEME_INIT_SCRIPT = `(() => {
   // would make React's metadata hoisting insert a second tag with the old color.
   const meta = document.createElement("meta");
   meta.name = "theme-color";
-  meta.content = location.pathname.startsWith("/read/") ? colors.dark : colors[theme];
+  meta.content = location.pathname.startsWith("/read/") ? ${JSON.stringify(READER_THEME_COLOR)} : colors[theme];
   document.head.appendChild(meta);
 })();`;

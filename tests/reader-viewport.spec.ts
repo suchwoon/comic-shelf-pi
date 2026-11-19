@@ -140,6 +140,7 @@ test("reader is dark and document scrolling is locked before hydration", async (
   await page.goto("/read/test-placeholder");
   await expect(page.locator(".reader-root")).toBeVisible();
   expect(blockedScripts).toBeGreaterThan(0);
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#141414");
   for (const selector of ["html", "body"]) {
     await expect(page.locator(selector)).toHaveCSS("background-color", "rgb(20, 20, 20)");
     await expect(page.locator(selector)).toHaveCSS("overflow", "hidden");

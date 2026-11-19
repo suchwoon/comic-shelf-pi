@@ -39,7 +39,7 @@
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --paper: #141414;
+  --paper: #181818;
   --surface: #1c1c1c;
   --ink: #ededed;
   --muted: #a3a3a3;
@@ -57,7 +57,7 @@
   --empty-icon: #a3a3a3;
   --reading-track: #333;
   --upload-track: #333;
-  --drop-background: #141414f5;
+  --drop-background: #181818f5;
   --backdrop: #00000099;
   --menu-shadow: #00000040;
   --dialog-shadow: #00000066;
@@ -70,7 +70,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
-    --paper: #141414;
+    --paper: #181818;
     --surface: #1c1c1c;
     --ink: #ededed;
     --muted: #a3a3a3;
@@ -88,7 +88,7 @@
     --empty-icon: #a3a3a3;
     --reading-track: #333;
     --upload-track: #333;
-    --drop-background: #141414f5;
+    --drop-background: #181818f5;
     --backdrop: #00000099;
     --menu-shadow: #00000040;
     --dialog-shadow: #00000066;
