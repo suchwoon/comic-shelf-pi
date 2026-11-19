@@ -67,8 +67,12 @@ async function expectPages(page: Page, numbers: number[]) {
 }
 
 async function jumpToPage(page: Page, number: number) {
-  await page.getByRole("textbox", { name: "Page number", exact: true }).fill(String(number));
-  await page.getByRole("textbox", { name: "Page number", exact: true }).press("Enter");
+  const input = page.getByRole("textbox", { name: "Page number", exact: true });
+  await input.click();
+  await expect(input).toBeFocused();
+  await input.fill(String(number));
+  await expect(input).toHaveValue(String(number));
+  await input.press("Enter");
 }
 
 async function expectControlsFit(page: Page) {
@@ -105,16 +109,19 @@ test("reader switches within the ordered series, resumes the next available volu
   await expectPages(page, [1]);
   await revealReaderControls(page);
   const selector = page.getByRole("combobox", { name: "Choose installment", exact: true });
-  await expect(selector).toHaveValue(first.id);
-  await expect(selector.locator("option")).toHaveCount(3);
-  expect(await selector.locator("option").evaluateAll(options => options.map(option => (option as HTMLOptionElement).value)))
-    .toEqual([first.id, second.id, tenth.id]);
-  await expect(selector.locator("option")).toHaveText([/Volume 1(?:\D|$)/, /Volume 2(?:\D|$)/, /Volume 10(?:\D|$)/]);
+  await expect(selector).toHaveText("Volume 1");
+  await selector.click();
+  const options = page.getByRole("listbox", { name: "Installments", exact: true }).getByRole("option");
+  await expect(options).toHaveCount(3);
+  await expect(options).toHaveText(["Volume 1", "Volume 2", "Volume 10"]);
+  await expect(options.first()).toHaveAttribute("aria-selected", "true");
+  await selector.press("Escape");
   await expect(page.getByRole("button", { name: /^Next volume:/ })).toHaveCount(0);
 
   await jumpToPage(page, 2);
   await expectPages(page, [2]);
-  await selector.selectOption(second.id);
+  await selector.click();
+  await page.getByRole("option", { name: "Volume 2", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/read/${second.id}$`));
   await expectPages(page, [1]);
   expect((await getBook(page.request, first.id)).currentPage).toBe(2);
@@ -184,7 +191,8 @@ test("a delayed failed save keeps the selected chapter target for navigation ret
     await jumpToPage(page, 3);
     await expectPages(page, [3]);
     const selector = page.getByRole("combobox", { name: "Choose installment", exact: true });
-    await selector.selectOption(second.id);
+    await selector.click();
+    await page.getByRole("option", { name: "Chapter 2", exact: true }).click();
     await expect(selector).toBeDisabled();
     await expect(page).toHaveURL(new RegExp(`/read/${first.id}$`));
     expect((await getBook(page.request, first.id)).currentPage).toBe(1);
@@ -198,7 +206,7 @@ test("a delayed failed save keeps the selected chapter target for navigation ret
     await expectPages(page, [1]);
     expect((await getBook(page.request, first.id)).currentPage).toBe(3);
     await revealReaderControls(page);
-    await expect(page.getByRole("combobox", { name: "Choose installment", exact: true })).toHaveValue(second.id);
+    await expect(page.getByRole("combobox", { name: "Choose installment", exact: true })).toHaveText("Chapter 2");
   } finally {
     offline = false;
     release.resolve();
@@ -225,6 +233,8 @@ test("the next-chapter action waits for the complete final spread and can be hid
     await revealReaderControls(page);
     await page.getByRole("button", { name: "Two-page view", exact: true }).click();
     await expect(page.getByRole("button", { name: "Two-page view", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expectPages(page, [1, 2]);
+    await page.getByRole("button", { name: "Two-page view", exact: true }).click();
     await expectPages(page, [1]);
     await jumpToPage(page, 4);
     await hideReaderControls(page);
@@ -270,6 +280,124 @@ test("the next-chapter action waits for the complete final spread and can be hid
   }
 });
 
+test("installment keyboard navigation commits only on selection and dismisses without changing the book", async ({ page, uploadedBooks }) => {
+  await login(page.request);
+  const name = `Picker keyboard ${randomUUID().slice(0, 8)}`;
+  const first = await upload(page.request, `${name} Chapter 1`, uploadedBooks);
+  const second = await upload(page.request, `${name} Chapter 2`, uploadedBooks);
+  await upload(page.request, `${name} Chapter 3`, uploadedBooks);
+  await page.goto(`/read/${first.id}`);
+  await expectPages(page, [1]);
+  await revealReaderControls(page);
+  await jumpToPage(page, 2);
+  await expectPages(page, [2]);
+  const selector = page.getByRole("combobox", { name: "Choose installment", exact: true });
+  const menu = page.getByRole("listbox", { name: "Installments", exact: true });
+  const expectActive = async (name: string) => {
+    const id = await menu.getByRole("option", { name, exact: true }).getAttribute("id");
+    expect(id).toBeTruthy();
+    await expect(selector).toHaveAttribute("aria-activedescendant", id!);
+    await expect(selector).toBeFocused();
+  };
+
+  await selector.press("Enter");
+  await expect(selector).toHaveAttribute("aria-expanded", "true");
+  await expect(menu.getByRole("option", { name: "Chapter 1", exact: true })).toHaveAttribute("aria-selected", "true");
+  await selector.press("End");
+  await expectActive("Chapter 3");
+  await selector.press("Home");
+  await expectActive("Chapter 1");
+  await selector.press("ArrowDown");
+  await expectActive("Chapter 2");
+  // Menu keys must not trigger the reader's Home/End shortcuts or commit a chapter.
+  await expectPages(page, [2]);
+  await expect(page).toHaveURL(new RegExp(`/read/${first.id}$`));
+  await selector.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(selector).toBeFocused();
+  await expect(selector).toHaveText("Chapter 1");
+
+  await selector.click();
+  await page.getByRole("textbox", { name: "Page number", exact: true }).click();
+  await expect(menu).toBeHidden();
+  await expect(selector).toHaveAttribute("aria-expanded", "false");
+  await selector.press("Enter");
+  await selector.press("Tab");
+  await expect(menu).toBeHidden();
+  await expect(page).toHaveURL(new RegExp(`/read/${first.id}$`));
+
+  await selector.press("Enter");
+  await selector.press("ArrowDown");
+  await expectActive("Chapter 2");
+  await selector.press("Enter");
+  await expect(page).toHaveURL(new RegExp(`/read/${second.id}$`));
+  await expectPages(page, [1]);
+  expect((await getBook(page.request, first.id)).currentPage).toBe(2);
+});
+
+test("long installment menus fit narrow screens and scroll without moving the comic", async ({ page, uploadedBooks }, testInfo) => {
+  await login(page.request);
+  const name = `A long series title for the installment menu ${randomUUID().slice(0, 8)}`;
+  const first = await upload(page.request, `${name} Chapter 1`, uploadedBooks);
+  const last = await upload(page.request, `${name} Chapter 30`, uploadedBooks);
+  await page.route(`**/api/books/${first.id}`, async route => {
+    const response = await route.fetch();
+    const data = await response.json();
+    const seriesBooks = Array.from({ length: 30 }, (_, index) => index === 0 ? first : index === 29 ? last : {
+      ...first, id: `menu-fixture-${index + 1}`, title: `${name} Chapter ${index + 1}`, installmentNumber: index + 1,
+    });
+    await route.fulfill({ response, json: { ...data, seriesBooks } });
+  });
+  try {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.goto(`/read/${first.id}`);
+    await expectPages(page, [1]);
+    await revealReaderControls(page);
+    await page.getByRole("combobox", { name: "Choose installment", exact: true }).click();
+    const menu = page.getByRole("listbox", { name: "Installments", exact: true });
+    await expect(menu.getByRole("option")).toHaveCount(30);
+    const bounds = (await menu.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.y).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(321);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(569);
+    expect(await menu.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+    const initialScroll = await menu.evaluate(element => element.scrollTop);
+    await page.screenshot({ path: testInfo.outputPath("installment-menu-narrow.png"), fullPage: true, animations: "disabled" });
+
+    if (testInfo.project.name === "mobile") {
+      const cdp = await page.context().newCDPSession(page);
+      const x = bounds.x + bounds.width / 2;
+      const fromY = bounds.y + bounds.height - 24;
+      const toY = bounds.y + 24;
+      try {
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y: fromY }] });
+        for (let step = 1; step <= 8; step++) {
+          await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: fromY + (toY - fromY) * step / 8 }] });
+          await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+        }
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      } finally { await cdp.detach(); }
+    } else {
+      await menu.hover();
+      await page.mouse.wheel(0, 500);
+    }
+    await expect.poll(() => menu.evaluate(element => element.scrollTop)).toBeGreaterThan(initialScroll);
+    await expectPages(page, [1]);
+    await expect(page).toHaveURL(new RegExp(`/read/${first.id}$`));
+    const lastOption = menu.getByRole("option", { name: "Chapter 30", exact: true });
+    await lastOption.scrollIntoViewIfNeeded();
+    if (testInfo.project.name === "mobile") await lastOption.tap();
+    else await lastOption.click();
+    await expect(page).toHaveURL(new RegExp(`/read/${last.id}$`));
+    await expectPages(page, [1]);
+    await revealReaderControls(page);
+    await expect(page.getByRole("combobox", { name: "Choose installment", exact: true })).toHaveText("Chapter 30");
+  } finally {
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
 test("fullscreen continues into the next chapter and exits when leaving the reader", async ({ page, uploadedBooks }) => {
   await login(page.request);
   await page.goto("/");
@@ -291,7 +419,7 @@ test("fullscreen continues into the next chapter and exits when leaving the read
   await expectPages(page, [1]);
   await expect.poll(readerIsFullscreen).toBe(true);
   await revealReaderControls(page);
-  await expect(page.getByRole("combobox", { name: "Choose installment", exact: true })).toHaveValue(second.id);
+  await expect(page.getByRole("combobox", { name: "Choose installment", exact: true })).toHaveText("Chapter 2");
   await expect(page.getByRole("button", { name: "Exit fullscreen", exact: true })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Back to series list", exact: true }).click();
   await expect(page).toHaveURL(seriesUrl);

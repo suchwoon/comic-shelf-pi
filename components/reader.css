@@ -11,20 +11,30 @@ body:has(.reader-root) { position: fixed; inset: 0; }
 .reader-root .reader-back:hover { background: #363636; color: #fff; }
 .reader-book-title { min-width: 0; max-width: 420px; margin: 0; padding: 12px 18px; overflow: hidden; border-radius: 24px; color: #ededed; font-size: 13px; font-weight: 500; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; pointer-events: auto; }
 .reader-series-heading { display: flex; align-items: center; min-width: 0; max-width: 420px; border-radius: 24px; pointer-events: auto; }
-.reader-series-title { min-width: 0; padding-left: 18px; overflow: hidden; color: #bdbdbd; font-size: 13px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
-.reader-installment-picker { position: relative; flex-shrink: 0; min-width: 0; max-width: 100%; }
-.reader-installment-picker select { display: block; appearance: none; width: 100%; max-width: 240px; min-height: 44px; padding: 0 32px 0 14px; border: 0; border-radius: 24px; background: transparent; color: #ededed; font: inherit; font-size: 13px; text-overflow: ellipsis; cursor: pointer; }
-.reader-installment-picker select:hover:not(:disabled) { background: #363636; }
-.reader-installment-picker select:disabled { opacity: .5; cursor: default; }
-.reader-installment-picker option { background: #242424; color: #ededed; }
-.reader-installment-picker > svg { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); pointer-events: none; }
+.reader-series-title { min-width: 0; padding: 0 14px 0 18px; overflow: hidden; color: #bdbdbd; font-size: 13px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.reader-installment-picker { position: relative; flex: 0 1 auto; min-width: 0; max-width: 240px; }
+.reader-installment-picker::before { content: ""; position: absolute; z-index: 1; top: 12px; bottom: 12px; left: 0; width: 1px; background: #454545; pointer-events: none; }
+.reader-installment-trigger { display: flex; align-items: center; justify-content: space-between; gap: 9px; width: 100%; min-height: 44px; padding: 0 14px; border-radius: 0 24px 24px 0; background: transparent; color: #ededed; font-size: 13px; text-align: left; }
+.reader-installment-trigger:hover:not(:disabled), .reader-installment-trigger[aria-expanded="true"] { background: #303030; }
+.reader-root .reader-installment-trigger:focus-visible { outline: 2px solid #a3a3a3; outline-offset: -4px; }
+.reader-installment-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reader-installment-chevron { flex-shrink: 0; color: #bdbdbd; transition: transform .15s; }
+.reader-installment-trigger[aria-expanded="true"] .reader-installment-chevron { transform: rotate(180deg); }
+.reader-installment-menu { position: absolute; z-index: 10; top: calc(100% + 8px); left: var(--reader-installment-menu-left, 0px); width: max-content; min-width: max(100%, 180px); max-width: min(320px, calc(100vw - 24px)); max-height: min(360px, var(--reader-installment-max-height, calc(100dvh - 112px))); overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; padding: 5px; border: 1px solid #404040; border-radius: 12px; background: #242424; color: #ededed; box-shadow: 0 10px 30px #0005; scrollbar-width: thin; scrollbar-color: #666 transparent; }
+.reader-installment-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 10px 12px; border-radius: 7px; font-size: 13px; line-height: 1.45; cursor: pointer; }
+.reader-installment-option[aria-selected="true"] { background: #303030; }
+.reader-installment-option[data-active="true"] { background: #3b3b3b; }
+.reader-installment-option .reader-installment-label { white-space: normal; overflow-wrap: anywhere; }
+.reader-installment-check { flex: 0 0 15px; width: 15px; height: 15px; color: #ededed; }
 .reader-heading-actions { display: flex; align-items: center; flex-shrink: 0; gap: 2px; padding: 4px; border-radius: 28px; pointer-events: auto; }
 .reader-icon-button, .reader-page-button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-height: 44px; border-radius: 50%; background: transparent; color: #dedede; transition: background .15s, color .15s; }
 .reader-icon-button { width: 44px; padding: 0; }
 .reader-heading-actions > .reader-icon-button { height: 44px; }
 .reader-icon-button:hover:not(:disabled), .reader-page-button:hover:not(:disabled) { background: #383838; color: #fff; }
-.reader-heading-actions > .reader-icon-button[aria-pressed="true"] { background: #e5e5e5; color: #202020; }
-.reader-heading-actions > .reader-icon-button[aria-pressed="true"]:hover:not(:disabled) { background: #fff; color: #141414; }
+.reader-heading-actions > .reader-icon-button[aria-pressed="true"] { --reader-toggle-background: #e5e5e5; background: var(--reader-toggle-background); color: #202020; }
+.reader-heading-actions > .reader-icon-button[aria-pressed="true"]:hover:not(:disabled) { --reader-toggle-background: #fff; color: #141414; }
+.reader-spread-filled > rect { fill: currentColor; }
+.reader-spread-filled > path { stroke: var(--reader-toggle-background); transition: stroke .15s; }
 .reader-root button:disabled { opacity: .35; }
 .reader-workspace { position: relative; flex: 1; min-height: 0; }
 .reader-canvas-scroll { width: 100%; height: 100%; overflow: auto; overscroll-behavior: contain; scrollbar-color: #404040 transparent; scrollbar-width: thin; }
@@ -79,7 +89,8 @@ body:has(.reader-root) { position: fixed; inset: 0; }
   .reader-back { width: 44px; height: 44px; }
   .reader-book-title { padding: 11px 14px; font-size: 12px; }
   .reader-series-title { display: none; }
-  .reader-installment-picker select { font-size: 12px; }
+  .reader-installment-trigger { border-radius: 24px; font-size: 12px; }
+  .reader-installment-picker::before { display: none; }
   .reader-pagination { gap: 8px; }
   .reader-save-status { bottom: calc(100% + 8px); }
   .reader-page-form { gap: 7px; }
@@ -95,6 +106,9 @@ body:has(.reader-root) { position: fixed; inset: 0; }
 }
 @media (forced-colors: active) {
   .reader-root .reader-floating { background: Canvas; color: CanvasText; border-color: ButtonText; box-shadow: none; }
+  .reader-installment-menu { background: Canvas; color: CanvasText; border-color: ButtonText; box-shadow: none; }
+  .reader-installment-option[data-active="true"] { outline: 1px solid Highlight; outline-offset: -2px; }
   .reader-heading-actions > .reader-icon-button[aria-pressed="true"] { outline: 2px solid Highlight; outline-offset: -4px; }
   .reader-heading-actions > .reader-icon-button[aria-pressed="true"]:focus-visible { outline-offset: 3px; }
+  .reader-spread-filled { --reader-toggle-background: ButtonFace; color: ButtonText; forced-color-adjust: none; }
 }

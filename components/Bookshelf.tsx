@@ -530,15 +530,12 @@ function BookshelfContent() {
         ) : <>
           <div className="shelf-book-grid">{selectedSeries ? filteredBooks.map(renderBook) : visibleEntries.map((entry, index) => {
             if (!entry.series) return renderBook(entry.books[0], index);
-            const completed = entry.books.filter(isCompleted).length;
-            const latestRead = [...entry.books].filter(book => book.lastReadAt).sort((a, b) => Date.parse(b.lastReadAt!) - Date.parse(a.lastReadAt!))[0];
             return <article key={`series:${entry.id}`} className="shelf-book-card shelf-series-card">
               <Link className="shelf-book-link" href={`/?series=${entry.id}`} aria-label={`Open series ${entry.title}`}>
                 <div className="shelf-series-cover"><BookCover book={entry.books[0]} eager={index < EAGER_COVER_COUNT} /><span className="shelf-series-badge"><Layers size={12} />Series</span></div>
                 <h3 title={entry.title}>{entry.title}</h3>
               </Link>
               <div className="shelf-book-meta"><span>{installmentCount(entry.books)}</span><ArrowRight size={14} aria-hidden="true" /></div>
-              <p className="shelf-series-progress">{latestRead ? completed === entry.books.length ? "All completed" : `${completed} completed · ${installmentLabel(latestRead)}` : "Not started"}</p>
             </article>;
           })}</div>
           <div className="shelf-collection-bottom"><span>{query.trim() ? `${resultCount} ${resultCount === 1 ? "result" : "results"}` : isAdmin ? "Drop PDF files anywhere to add them." : "Your reading progress is saved to your account."}</span>{isAdmin && maxUploadBytes > 0 && <span>{formatBytes(maxUploadBytes)} per file</span>}</div>

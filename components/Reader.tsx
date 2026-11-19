@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
-import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, LoaderCircle, Maximize, Minimize, MoveHorizontal, RotateCcw } from "lucide-react";
-import { installmentLabel } from "@/lib/client/series";
+import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronLeft, ChevronRight, Columns2, LoaderCircle, Maximize, Minimize, RotateCcw } from "lucide-react";
+import InstallmentPicker from "./InstallmentPicker";
 import { ImagePageDocument, type PageDocument } from "@/lib/reader/page-document";
 import { DEFAULT_READING_DIRECTION, type Book, type ReadingDirection } from "@/lib/types";
 import { PdfPageCache } from "@/lib/reader/page-cache";
@@ -208,7 +208,7 @@ export default function Reader({ bookId }: { bookId: string }) {
     };
     const preventPagePan = (event: TouchEvent) => {
       if (multiTouch || event.touches.length !== 1 || (window.visualViewport?.scale ?? 1) > 1.01) return;
-      if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true]")) return;
+      if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true], .reader-installment-picker")) return;
       if (event.cancelable) event.preventDefault();
     };
     reader.addEventListener("touchstart", startTouch, { passive: true });
@@ -457,12 +457,18 @@ export default function Reader({ bookId }: { bookId: string }) {
     return () => workspace.removeEventListener("wheel", wheel);
   }, [goRelative, pageDocument, missing]);
 
-  const toggleTwoPages = () => {
-    const value = !twoPages;
+  const cyclePageLayout = () => {
+    // Single page → pairs starting at page 1 → cover-first pairs → single page.
+    const nextTwoPages = !twoPages || spreadOffset === 0;
+    const nextOffset = twoPages ? 1 : 0;
     spreadNavigating.current = true;
-    setTwoPages(value);
+    setTwoPages(nextTwoPages);
+    setSpreadOffset(nextOffset);
     wheelGesture.current.reset();
-    try { localStorage.setItem(TWO_PAGE_STORAGE_KEY, String(value)); }
+    try {
+      localStorage.setItem(TWO_PAGE_STORAGE_KEY, String(nextTwoPages));
+      localStorage.setItem(`${SPREAD_OFFSET_STORAGE_PREFIX}${bookId}`, String(nextOffset));
+    }
     catch { /* The preference still applies for this reading session. */ }
   };
 
@@ -470,15 +476,6 @@ export default function Reader({ bookId }: { bookId: string }) {
     const value = direction === "ltr" ? "rtl" : "ltr";
     setDirection(value);
     change({ direction: value });
-  };
-
-  const toggleSpreadOffset = () => {
-    const value = spreadOffset === 1 ? 0 : 1;
-    spreadNavigating.current = true;
-    setSpreadOffset(value);
-    wheelGesture.current.reset();
-    try { localStorage.setItem(`${SPREAD_OFFSET_STORAGE_PREFIX}${bookId}`, String(value)); }
-    catch { /* The adjustment still applies for this reading session. */ }
   };
 
   const toggleFullscreen = useCallback(async () => {
@@ -494,7 +491,7 @@ export default function Reader({ bookId }: { bookId: string }) {
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if (!pageDocument || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select, [contenteditable=true]")) return;
+      if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select, [contenteditable=true], .reader-installment-picker")) return;
       if (event.key === "ArrowRight") goRelative(direction === "ltr" ? 1 : -1);
       else if (event.key === "ArrowLeft") goRelative(direction === "ltr" ? -1 : 1);
       else if (event.key === "Home") goToPage(1);
@@ -600,37 +597,21 @@ export default function Reader({ bookId }: { bookId: string }) {
             {leaving ? <LoaderCircle className="reader-spin" size={18} /> : <ArrowLeft size={19} />}<span className="sr-only">{leaving ? "Saving…" : book?.seriesId ? "Series" : "Library"}</span>
           </Link>
           {hasSeriesNavigation && seriesBooks.length > 1 ? (
-            <div className="reader-series-heading reader-floating" title={book?.title}>
+            <div className="reader-series-heading reader-floating">
               <h1 className="sr-only">{book?.title}</h1>
-              <span className="reader-series-title" aria-hidden="true">{book?.seriesTitle}</span>
-              <div className="reader-installment-picker">
-                <select aria-label="Choose installment" value={bookId} disabled={!pageDocument || leaving || missing}
-                  onChange={event => {
-                    if (event.target.value !== bookId) void navigateTo(`/read/${encodeURIComponent(event.target.value)}`, true);
-                  }}>
-                  {seriesBooks.map(item => {
-                    const label = installmentLabel(item);
-                    const needsTitle = item.installmentNumber === null
-                      || seriesBooks.some(other => other.id !== item.id && installmentLabel(other) === label);
-                    return <option key={item.id} value={item.id}>{label}{needsTitle ? ` · ${item.title}` : ""}</option>;
-                  })}
-                </select>
-                <ChevronDown size={14} aria-hidden="true" />
-              </div>
+              <span className="reader-series-title" title={book?.seriesTitle || undefined} aria-hidden="true">{book?.seriesTitle}</span>
+              <InstallmentPicker books={seriesBooks} value={bookId} disabled={!pageDocument || leaving || missing || !controls}
+                onChange={id => { if (id !== bookId) void navigateTo(`/read/${encodeURIComponent(id)}`, true); }} />
             </div>
           ) : <h1 className="reader-book-title reader-floating" title={book?.title}>{book?.title || "Opening book"}</h1>}
         </div>
         <div className="reader-heading-actions reader-floating" role="group" aria-label="Reading controls">
-          <button type="button" className="reader-icon-button reader-spread-toggle" onClick={toggleTwoPages}
+          <button type="button" className="reader-icon-button reader-spread-toggle" onClick={cyclePageLayout}
             disabled={!pageDocument || leaving || missing} aria-label="Two-page view" aria-pressed={twoPages}
-            title={twoPages ? "Switch to single-page view" : "Switch to two-page view"}>
-            <Columns2 size={19} />
+            aria-description={!twoPages ? "Single-page view" : spreadOffset === 0 ? "Two-page view 1: pair pages 1–2, 3–4" : "Two-page view 2: cover separate, pair pages 2–3, 4–5"}
+            title={!twoPages ? "Switch to two-page view 1: pair pages 1–2, 3–4" : spreadOffset === 0 ? "Switch to two-page view 2: keep the cover separate, pair pages 2–3, 4–5" : "Switch to single-page view"}>
+            <Columns2 size={19} className={twoPages && spreadOffset === 1 ? "reader-spread-filled" : undefined} />
           </button>
-          {twoPages && <button type="button" className="reader-icon-button" onClick={toggleSpreadOffset}
-            disabled={!pageDocument || leaving || missing} aria-label="Shift page pairs" aria-pressed={spreadOffset === 0}
-            title={spreadOffset === 1 ? "Shift page pairs: pair pages 1–2, 3–4" : "Shift page pairs: keep the cover separate, pair pages 2–3, 4–5"}>
-            <MoveHorizontal size={19} />
-          </button>}
           <button type="button" className="reader-icon-button reader-direction" onClick={toggleDirection}
             disabled={!pageDocument || leaving || missing} aria-label={`Reading direction: ${direction === "ltr" ? "Left to right" : "Right to left"}`}
             title={direction === "ltr" ? "Read right to left" : "Read left to right"}>
