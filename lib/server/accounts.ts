@@ -16,7 +16,7 @@ const shared = globalThis as typeof globalThis & {
   __comicAccountSchemas?: WeakSet<DatabaseSync>;
   __comicAccountAttempts?: Map<string, Attempt>;
 };
-const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
+export const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 const account = (row: AccountUser): AccountUser => ({ id: row.id, username: row.username, role: row.role, createdAt: row.createdAt });
 
 export function validateUsername(value: unknown): string {
@@ -52,6 +52,14 @@ export function ensureAccountState() {
         expiresAt TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS sessions_user ON sessions(userId);
+      CREATE TABLE IF NOT EXISTS quiz_credentials (
+        tokenHash TEXT PRIMARY KEY,
+        sessionHash TEXT NOT NULL REFERENCES sessions(tokenHash) ON DELETE CASCADE,
+        challenge TEXT,
+        expiresAt TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS quiz_session ON quiz_credentials(sessionHash);
+      CREATE INDEX IF NOT EXISTS quiz_expiry ON quiz_credentials(expiresAt);
       CREATE TABLE IF NOT EXISTS invitations (
         id TEXT PRIMARY KEY,
         tokenHash TEXT NOT NULL UNIQUE,

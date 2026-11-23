@@ -9,6 +9,7 @@ import {
   CircleAlert, CloudUpload, Ellipsis, FileText, LoaderCircle,
   LockKeyhole, LogOut, Pencil, Plus, RotateCcw, Search, Trash2, UserRound, X,
 } from "lucide-react";
+import { quizConnectParams } from "@/lib/quiz-connect";
 import type { Book, LibraryResponse, SessionResponse } from "@/lib/types";
 import { UploadError, uploadPdf } from "@/lib/client/upload";
 import { isDialogBackdropClick, showModalDialog } from "@/lib/client/dialog";
@@ -169,6 +170,8 @@ function BookshelfContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const selectedSeriesId = searchParams.get("series");
+  const quizParams = searchParams.has("quiz") && quizConnectParams(searchParams);
+  const quizConnectPath = quizParams ? "/quiz/connect?" + quizParams.toString() : null;
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [sessionError, setSessionError] = useState("");
   const [books, setBooks] = useState<Book[]>([]);
@@ -247,7 +250,11 @@ function BookshelfContent() {
   }, [requireLogin]);
 
   useEffect(() => { void loadSession(); }, [loadSession]);
-  useEffect(() => { if (session?.authenticated && session.user) void loadBooks(); }, [session?.authenticated, session?.user?.id, loadBooks]);
+  useEffect(() => {
+    if (!session?.authenticated || !session.user) return;
+    if (quizConnectPath) window.location.replace(quizConnectPath);
+    else void loadBooks();
+  }, [session?.authenticated, session?.user?.id, quizConnectPath, loadBooks]);
   useEffect(() => () => { activeUpload.current?.abort(); }, []);
   useEffect(() => {
     if (!notice) return;
@@ -446,12 +453,12 @@ function BookshelfContent() {
     content = (
       <section className="shelf-login">
         <form className="shelf-login-form" onSubmit={login}>
-          <h1>Your library</h1>
-          <p>Sign in to continue where you left off.</p>
+          <h1>{quizConnectPath ? "Quiz Room" : "Your library"}</h1>
+          <p>{quizConnectPath ? "Sign in with your Shelf account." : "Sign in to continue where you left off."}</p>
           <label className="shelf-field-label">Username<input autoComplete="username" autoCapitalize="none" spellCheck={false} autoFocus value={username} onChange={event => setUsername(event.target.value)} required disabled={loginBusy} /></label>
           <label className="shelf-field-label">Library password<input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required disabled={loginBusy} /></label>
           {loginError && <p className="shelf-form-error" role="alert"><CircleAlert size={16} />{loginError}</p>}
-          <button type="submit" className="shelf-button shelf-button-primary" disabled={loginBusy || !username.trim() || !password}>{loginBusy && <LoaderCircle size={16} className="shelf-spin" />}Open library<ArrowRight size={16} /></button>
+          <button type="submit" className="shelf-button shelf-button-primary" disabled={loginBusy || !username.trim() || !password}>{loginBusy && <LoaderCircle size={16} className="shelf-spin" />}{quizConnectPath ? "Continue to Quiz Room" : "Open library"}<ArrowRight size={16} /></button>
           <p className="shelf-login-help">Need an account or a password reset? Ask the library administrator for a link.</p>
         </form>
       </section>

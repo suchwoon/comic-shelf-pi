@@ -63,7 +63,7 @@ export function requirePasswordConfigured() {
   ensureAccountState();
 }
 
-function requestToken(request: Request) {
+export function requestToken(request: Request) {
   return request.headers.get("cookie")?.split(";").map(value => value.trim())
     .find(value => value.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1) || null;
 }
