@@ -48,7 +48,8 @@ if (stored.TunnelID !== tunnel.id) throw new Error("The tunnel credentials do no
 const config = {
   tunnel: tunnel.id,
   "credentials-file": credentials,
-  metrics: "127.0.0.1:20241",
+  // Keep this outside cloudflared's default 20241–20245 range used by Quiz Room.
+  metrics: "127.0.0.1:20246",
   ingress: [
     { hostname, service: "http://127.0.0.1:3000" },
     { service: "http_status:404" },
@@ -72,5 +73,5 @@ async function waitFor(url) {
   throw new Error(`The service is installed but not ready at ${url}. Check systemctl --user status comic-shelf.service comic-shelf-tunnel.service.`);
 }
 await waitFor("http://127.0.0.1:3000/api/session");
-await waitFor("http://127.0.0.1:20241/ready");
+await waitFor(`http://${config.metrics}/ready`);
 console.log(`Connected https://${hostname}. Sign in with your administrator account. For a new library, the initial credentials are ADMIN_USERNAME and BOOKS_PASSWORD in .env.local.`);
