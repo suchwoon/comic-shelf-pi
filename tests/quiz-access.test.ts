@@ -81,7 +81,7 @@ it("exchanges each code once with its verifier and limits the grant to account i
   const responses = await Promise.all([exchange(post({ code, verifier })), exchange(post({ code, verifier }))]);
   assert.deepEqual(responses.map(r => r.status).sort(), [200, 401]);
   const { grant, expiresAt, user: exchangedUser } = await responses.find(response => response.ok)!.json();
-  assert.deepEqual(exchangedUser, { id: user.id, username: user.username });
+  assert.deepEqual(exchangedUser, { id: user.id, username: user.username, role: "admin" });
   assert.ok(Date.parse(expiresAt) > Date.now());
   assert.equal(sessionUser(grant), null);
   const info = await identity(post({ grant }));
@@ -109,6 +109,8 @@ it("expires pending codes and stops quiz access when the underlying session expi
   assert.equal((await identity(post({ grant }))).status, 401);
   const reader = await registerAccount(createInvitation().token, "Reader", "readerPass");
   let next = await grantFor(reader.token);
+  const readerIdentity = await identity(post({ grant: next }));
+  assert.deepEqual(await readerIdentity.json(), { user: { id: reader.user.id, username: reader.user.username, role: "reader" } });
   revokeSession(reader.token);
   assert.equal((await identity(post({ grant: next }))).status, 401);
   const renewed = await signIn("Reader", "readerPass");

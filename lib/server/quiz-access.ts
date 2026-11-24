@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import type { AccountUser } from "../types";
 import { ensureAccountState, tokenHash } from "./accounts";
 import { requestToken } from "./auth";
 import { ApiError, readJson } from "./http";
@@ -48,12 +49,13 @@ export function quizIdentity(grant: unknown) {
   if (!validToken(grant)) throw unauthorized();
   const db = ensureAccountState();
   const now = new Date().toISOString();
-  const row = db.prepare(`SELECT u.id, u.username, s.expiresAt FROM quiz_credentials q
+  const row = db.prepare(`SELECT u.id, u.username, u.role, s.expiresAt FROM quiz_credentials q
     JOIN sessions s ON s.tokenHash = q.sessionHash JOIN users u ON u.id = s.userId
     WHERE q.tokenHash = ? AND q.challenge IS NULL AND q.expiresAt > ? AND s.expiresAt > ? AND u.disabled = 0`)
-    .get(tokenHash(grant), now, now) as { id: string; username: string; expiresAt: string } | undefined;
+    .get(tokenHash(grant), now, now) as (Pick<AccountUser, "id" | "username" | "role"> & { expiresAt: string }) | undefined;
   if (!row) throw unauthorized();
-  return { user: { id: row.id, username: row.username }, expiresAt: row.expiresAt };
+  const { id, username, role, expiresAt } = row;
+  return { user: { id, username, role }, expiresAt };
 }
 
 export function exchangeQuizCode(code: unknown, verifier: unknown) {
